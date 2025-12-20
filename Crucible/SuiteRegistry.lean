@@ -1,0 +1,83 @@
+import Lean
+
+/-!
+# Test Suite Registry
+
+Provides auto-discovery of test suites across modules using the `testSuite` command.
+
+## Usage
+
+In each test module:
+```lean
+import Crucible
+
+namespace MyTests
+
+testSuite "My Test Suite"
+
+test "test 1" := do ...
+test "test 2" := do ...
+
+#generate_tests
+
+end MyTests
+```
+
+In Main.lean, use `getAllSuites` to get all registered suites.
+-/
+
+namespace Crucible.SuiteRegistry
+
+open Lean Elab Command
+
+/-! ## Suite Info Structure -/
+
+/-- Information about a registered test suite. -/
+structure SuiteInfo where
+  /-- Human-readable name for the suite (shown in test output) -/
+  suiteName : String
+  /-- The namespace containing the tests -/
+  ns : Name
+  deriving Inhabited, BEq
+
+instance : ToString SuiteInfo where
+  toString s := s!"{s.suiteName} ({s.ns})"
+
+/-! ## Environment Extension for Suite Collection -/
+
+/-- Environment extension that collects test suite registrations. -/
+initialize suiteExtension : SimplePersistentEnvExtension SuiteInfo (Array SuiteInfo) ←
+  registerSimplePersistentEnvExtension {
+    name := `crucibleTestSuiteRegistry
+    addImportedFn := fun arrays => arrays.foldl Array.append #[]
+    addEntryFn := Array.push
+  }
+
+/-- Get all registered test suites from the environment. -/
+def getAllSuites (env : Environment) : Array SuiteInfo :=
+  suiteExtension.getState env
+
+/-! ## Test Suite Syntax -/
+
+/-- Syntax for registering a test suite: `testSuite "Suite Name"` -/
+syntax (name := testSuiteCmd) "testSuite " str : command
+
+@[command_elab testSuiteCmd]
+def elabTestSuite : CommandElab := fun stx => do
+  match stx with
+  | `(testSuite $name:str) =>
+    let suiteName := name.getString
+    let currNs ← getCurrNamespace
+    let info : SuiteInfo := { suiteName, ns := currNs }
+
+    -- Check for duplicate registration
+    let env ← getEnv
+    let existing := getAllSuites env
+    if existing.any (fun s => s.ns == currNs) then
+      logWarning s!"Test suite already registered for namespace {currNs}"
+    else
+      modifyEnv fun env => suiteExtension.addEntry env info
+
+  | _ => throwUnsupportedSyntax
+
+end Crucible.SuiteRegistry
