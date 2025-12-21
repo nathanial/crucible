@@ -70,12 +70,10 @@ def elabTestSuite : CommandElab := fun stx => do
     let currNs ← getCurrNamespace
     let info : SuiteInfo := { suiteName, ns := currNs }
 
-    -- Check for duplicate registration
+    -- Only register the first suite per namespace; subsequent calls are for grouping
     let env ← getEnv
     let existing := getAllSuites env
-    if existing.any (fun s => s.ns == currNs) then
-      logWarning s!"Test suite already registered for namespace {currNs}"
-    else
+    unless existing.any (fun s => s.ns == currNs) do
       modifyEnv fun env => suiteExtension.addEntry env info
 
   | _ => throwUnsupportedSyntax
