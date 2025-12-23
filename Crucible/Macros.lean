@@ -46,6 +46,9 @@ def getRegisteredTests (env : Environment) : Array Name :=
 /-- Syntax for defining a test case: `test "description" := do body` -/
 syntax (name := testDecl) "test " str " := " doSeq : command
 
+/-- Syntax for defining a test case with timeout: `test "description" (timeout := 5000) := do body` -/
+syntax (name := testDeclTimeout) "test " str "(" "timeout" ":=" term ")" " := " doSeq : command
+
 /-! ## Helper Functions -/
 
 /-- Convert a test description string into a valid Lean identifier.
@@ -78,28 +81,52 @@ private def mkTestName (desc : String) (ns : Name) : CommandElabM Name := do
 
 /-! ## Test Elaborator -/
 
+private def elabTestCore (desc : TSyntax `str) (body : TSyntax `Lean.Parser.Term.doSeq)
+    (timeoutOpt : Option (TSyntax `term)) : CommandElabM Unit := do
+  let descStr := desc.getString
+  let ns ← getCurrNamespace
+  let defName ← mkTestName descStr ns
+  let defId := mkIdent defName
+
+  -- Generate the TestCase definition
+  let cmd ←
+    match timeoutOpt with
+    | some timeoutVal =>
+      `(command|
+        private def $defId : TestCase := {
+          name := $desc
+          run := do $body
+          timeoutMs := some $timeoutVal:term
+        }
+      )
+    | none =>
+      `(command|
+        private def $defId : TestCase := {
+          name := $desc
+          run := do $body
+        }
+      )
+  elabCommand cmd
+
+  -- Register the full name in the environment extension
+  let fullName := ns ++ defName
+  modifyEnv fun env => testCaseExtension.addEntry env fullName
+
 @[command_elab testDecl]
 def elabTest : CommandElab := fun stx => do
   match stx with
-  | `(test $desc:str := $body:doSeq) =>
-    let descStr := desc.getString
-    let ns ← getCurrNamespace
-    let defName ← mkTestName descStr ns
-    let defId := mkIdent defName
+  | `(command| test $desc:str := $body:doSeq) =>
+    elabTestCore desc body none
+  | _ => throwUnsupportedSyntax
 
-    -- Generate the TestCase definition
-    let cmd ← `(command|
-      private def $defId : TestCase := {
-        name := $desc
-        run := do $body
-      }
-    )
-    elabCommand cmd
-
-    -- Register the full name in the environment extension
-    let fullName := ns ++ defName
-    modifyEnv fun env => testCaseExtension.addEntry env fullName
-
+@[command_elab testDeclTimeout]
+def elabTestTimeout : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: desc :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: body :: _ =>
+      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩)
+    | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
 /-! ## Generate Tests Command -/

@@ -13,6 +13,11 @@ namespace Crucible
 structure TestCase where
   name : String
   run : IO Unit
+  timeoutMs : Option Nat := none
+
+/-- Return a copy of the test case with a timeout configured (in milliseconds). -/
+def TestCase.withTimeout (tc : TestCase) (timeoutMs : Nat) : TestCase :=
+  { tc with timeoutMs := some timeoutMs }
 
 /-- Assert that a condition is true. -/
 def ensure (cond : Bool) (msg : String) : IO Unit := do
@@ -86,10 +91,35 @@ scoped infix:50 " ≡ " => shouldBe
 scoped infix:50 " ≡? " => shouldBeSome
 
 /-- Run a single test case. -/
-def runTest (tc : TestCase) : IO Bool := do
+private def runWithTimeout (timeoutMs : Nat) (action : IO Unit) : IO Unit := do
+  let testTask ← IO.asTask (do
+    action
+    return Sum.inl ()
+  )
+  let timeoutTask ← IO.asTask (do
+    IO.sleep (UInt32.ofNat timeoutMs)
+    return Sum.inr ()
+  )
+  let result ← IO.waitAny [testTask, timeoutTask]
+  match result with
+  | .ok (.inl ()) =>
+    IO.cancel timeoutTask
+    pure ()
+  | .ok (.inr ()) =>
+    IO.cancel testTask
+    throw <| IO.userError s!"Test timed out after {timeoutMs}ms"
+  | .error err =>
+    IO.cancel timeoutTask
+    throw err
+
+/-- Run a single test case. -/
+def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none) : IO Bool := do
   IO.print s!"  {tc.name}... "
   try
-    tc.run
+    let timeoutMs := tc.timeoutMs.orElse (fun _ => defaultTimeoutMs)
+    match timeoutMs with
+    | some ms => runWithTimeout ms tc.run
+    | none => tc.run
     IO.println "✓"
     return true
   catch e =>
@@ -97,13 +127,14 @@ def runTest (tc : TestCase) : IO Bool := do
     return false
 
 /-- Run a list of test cases and report results. -/
-def runTests (name : String) (cases : List TestCase) : IO UInt32 := do
+def runTests (name : String) (cases : List TestCase)
+    (defaultTimeoutMs : Option Nat := none) : IO UInt32 := do
   IO.println s!"\n{name}"
   IO.println ("─".intercalate (List.replicate name.length ""))
   let mut passed := 0
   let mut failed := 0
   for tc in cases do
-    if ← runTest tc then
+    if ← runTest tc defaultTimeoutMs then
       passed := passed + 1
     else
       failed := failed + 1
@@ -117,8 +148,13 @@ open Lean Elab Term
 /-- Run all registered test suites discovered via `testSuite`. -/
 syntax (name := runAllSuitesTerm) "runAllSuites" : term
 
-@[term_elab runAllSuitesTerm]
-def elabRunAllSuites : TermElab := fun _stx expectedType? => do
+/-- Run all registered test suites discovered via `testSuite` with a timeout. -/
+syntax (name := runAllSuitesTermTimeout) "runAllSuites" "(" "timeout" ":=" term ")" : term
+
+-- Syntax for a timeout-enabled suite runner.
+
+private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
+    (expectedType? : Option Expr) : TermElabM Expr := do
   let env ← getEnv
   let ref ← getRef
   let mut suiteEntries : Array (TSyntax `term) := #[]
@@ -137,14 +173,33 @@ def elabRunAllSuites : TermElab := fun _stx expectedType? => do
     let entry ← `(term| ($suiteNameLit, $casesTerm))
     suiteEntries := suiteEntries.push entry
 
+  let timeoutTerm : TSyntax `term ←
+    match timeoutOpt with
+    | some t => `(term| some $t)
+    | none => `(term| none)
+
   let body : TSyntax `term ← `(term| do
     let suites : Array (String × List _root_.Crucible.TestCase) := #[$[$suiteEntries],*]
     let mut exitCode : UInt32 := 0
     for (name, cases) in suites do
-      exitCode := exitCode + (← _root_.Crucible.runTests name cases)
+      exitCode := exitCode + (← _root_.Crucible.runTests name cases $timeoutTerm)
     return exitCode
   )
 
   elabTerm body expectedType?
+
+@[term_elab runAllSuitesTerm]
+def elabRunAllSuites : TermElab := fun _stx expectedType? =>
+  elabRunAllSuitesCore none expectedType?
+
+@[term_elab runAllSuitesTermTimeout]
+def elabRunAllSuitesTimeout : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: _ :: _ :: timeoutStx :: _ =>
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
 
 end Crucible
