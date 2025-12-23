@@ -33,6 +33,19 @@ def shouldBe [BEq α] [Repr α] (actual : α) (expected : α) : IO Unit := do
   if actual != expected then
     throw <| IO.userError s!"Expected {repr expected}, got {repr actual}"
 
+/-- Check if two floats are approximately equal within epsilon. -/
+def floatNear (a b : Float) (eps : Float := 0.0001) : Bool :=
+  Float.abs (a - b) < eps
+
+/-- Assert that two floats are approximately equal within epsilon. -/
+def shouldBeNear (actual expected : Float) (eps : Float := 0.0001) : IO Unit := do
+  if !floatNear actual expected eps then
+    throw <| IO.userError s!"Expected {expected} (±{eps}), got {actual}"
+
+/-- Alias for `shouldBeNear` for approximate comparisons. -/
+def shouldBeApprox (actual expected : Float) (eps : Float := 0.0001) : IO Unit :=
+  shouldBeNear actual expected eps
+
 /-- Assert that an Option contains the expected value. -/
 def shouldBeSome [BEq α] [Repr α] (actual : Option α) (expected : α) : IO Unit := do
   match actual with
