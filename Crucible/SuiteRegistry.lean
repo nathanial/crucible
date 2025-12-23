@@ -57,6 +57,15 @@ initialize suiteExtension : SimplePersistentEnvExtension SuiteInfo (Array SuiteI
 def getAllSuites (env : Environment) : Array SuiteInfo :=
   suiteExtension.getState env
 
+/-- The name of the `cases` definition associated with a suite's namespace. -/
+def suiteCasesName (suite : SuiteInfo) : Name :=
+  suite.ns ++ `cases
+
+/-- Iterate over all registered suites in the environment. -/
+def forAllSuites [Monad m] (env : Environment) (f : SuiteInfo → m Unit) : m Unit := do
+  for suite in getAllSuites env do
+    f suite
+
 /-! ## Test Suite Syntax -/
 
 /-- Syntax for registering a test suite: `testSuite "Suite Name"` -/

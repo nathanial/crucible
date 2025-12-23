@@ -1,3 +1,6 @@
+import Lean
+import Crucible.SuiteRegistry
+
 /-!
 # Core Test Framework Types
 
@@ -93,5 +96,42 @@ def runTests (name : String) (cases : List TestCase) : IO UInt32 := do
       failed := failed + 1
   IO.println s!"\nResults: {passed} passed, {failed} failed"
   return if failed > 0 then 1 else 0
+
+/-! ## Automatic Suite Runner -/
+
+open Lean Elab Term
+
+/-- Run all registered test suites discovered via `testSuite`. -/
+syntax (name := runAllSuitesTerm) "runAllSuites" : term
+
+@[term_elab runAllSuitesTerm]
+def elabRunAllSuites : TermElab := fun _stx expectedType? => do
+  let env ← getEnv
+  let ref ← getRef
+  let mut suiteEntries : Array (TSyntax `term) := #[]
+
+  for suite in SuiteRegistry.getAllSuites env do
+    let suiteNameLit : TSyntax `term := ⟨Syntax.mkStrLit suite.suiteName⟩
+    let casesName := SuiteRegistry.suiteCasesName suite
+    let casesIdent := mkIdentFrom ref casesName (canonical := true)
+    let casesTerm : TSyntax `term ←
+      if env.contains casesName then
+        `(term| $casesIdent)
+      else
+        logWarning s!"No `cases` definition found for suite {suite.suiteName} ({suite.ns}). Did you forget #generate_tests?"
+        `(term| ([] : List _root_.Crucible.TestCase))
+
+    let entry ← `(term| ($suiteNameLit, $casesTerm))
+    suiteEntries := suiteEntries.push entry
+
+  let body : TSyntax `term ← `(term| do
+    let suites : Array (String × List _root_.Crucible.TestCase) := #[$[$suiteEntries],*]
+    let mut exitCode : UInt32 := 0
+    for (name, cases) in suites do
+      exitCode := exitCode + (← _root_.Crucible.runTests name cases)
+    return exitCode
+  )
+
+  elabTerm body expectedType?
 
 end Crucible
