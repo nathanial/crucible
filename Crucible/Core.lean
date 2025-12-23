@@ -14,10 +14,15 @@ structure TestCase where
   name : String
   run : IO Unit
   timeoutMs : Option Nat := none
+  retryCount : Option Nat := none
 
 /-- Return a copy of the test case with a timeout configured (in milliseconds). -/
 def TestCase.withTimeout (tc : TestCase) (timeoutMs : Nat) : TestCase :=
   { tc with timeoutMs := some timeoutMs }
+
+/-- Return a copy of the test case with a retry count configured. -/
+def TestCase.withRetry (tc : TestCase) (retryCount : Nat) : TestCase :=
+  { tc with retryCount := some retryCount }
 
 /-- Assert that a condition is true. -/
 def ensure (cond : Bool) (msg : String) : IO Unit := do
@@ -113,13 +118,23 @@ private def runWithTimeout (timeoutMs : Nat) (action : IO Unit) : IO Unit := do
     throw err
 
 /-- Run a single test case. -/
-def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none) : IO Bool := do
+def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
+    (defaultRetryCount : Option Nat := none) : IO Bool := do
   IO.print s!"  {tc.name}... "
   try
     let timeoutMs := tc.timeoutMs.orElse (fun _ => defaultTimeoutMs)
-    match timeoutMs with
-    | some ms => runWithTimeout ms tc.run
-    | none => tc.run
+    let retryCount := tc.retryCount.orElse (fun _ => defaultRetryCount) |>.getD 0
+    let rec attempt (n : Nat) : IO Unit := do
+      try
+        match timeoutMs with
+        | some ms => runWithTimeout ms tc.run
+        | none => tc.run
+      catch e =>
+        if n < retryCount then
+          attempt (n + 1)
+        else
+          throw e
+    attempt 0
     IO.println "✓"
     return true
   catch e =>
@@ -128,13 +143,14 @@ def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none) : IO Bool :=
 
 /-- Run a list of test cases and report results. -/
 def runTests (name : String) (cases : List TestCase)
-    (defaultTimeoutMs : Option Nat := none) : IO UInt32 := do
+    (defaultTimeoutMs : Option Nat := none)
+    (defaultRetryCount : Option Nat := none) : IO UInt32 := do
   IO.println s!"\n{name}"
   IO.println ("─".intercalate (List.replicate name.length ""))
   let mut passed := 0
   let mut failed := 0
   for tc in cases do
-    if ← runTest tc defaultTimeoutMs then
+    if ← runTest tc defaultTimeoutMs defaultRetryCount then
       passed := passed + 1
     else
       failed := failed + 1
@@ -154,6 +170,7 @@ syntax (name := runAllSuitesTermTimeout) "runAllSuites" "(" "timeout" ":=" term 
 -- Syntax for a timeout-enabled suite runner.
 
 private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
+    (retryOpt : Option (TSyntax `term))
     (expectedType? : Option Expr) : TermElabM Expr := do
   let env ← getEnv
   let ref ← getRef
@@ -178,11 +195,16 @@ private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
     | some t => `(term| some $t)
     | none => `(term| none)
 
+  let retryTerm : TSyntax `term ←
+    match retryOpt with
+    | some r => `(term| some $r)
+    | none => `(term| none)
+
   let body : TSyntax `term ← `(term| do
     let suites : Array (String × List _root_.Crucible.TestCase) := #[$[$suiteEntries],*]
     let mut exitCode : UInt32 := 0
     for (name, cases) in suites do
-      exitCode := exitCode + (← _root_.Crucible.runTests name cases $timeoutTerm)
+      exitCode := exitCode + (← _root_.Crucible.runTests name cases $timeoutTerm $retryTerm)
     return exitCode
   )
 
@@ -190,7 +212,7 @@ private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
 
 @[term_elab runAllSuitesTerm]
 def elabRunAllSuites : TermElab := fun _stx expectedType? =>
-  elabRunAllSuitesCore none expectedType?
+  elabRunAllSuitesCore none none expectedType?
 
 @[term_elab runAllSuitesTermTimeout]
 def elabRunAllSuitesTimeout : TermElab := fun stx expectedType? => do
@@ -198,7 +220,48 @@ def elabRunAllSuitesTimeout : TermElab := fun stx expectedType? => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: _ :: _ :: _ :: timeoutStx :: _ =>
-      elabRunAllSuitesCore (some ⟨timeoutStx⟩) expectedType?
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) none expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+/-- Run all registered test suites discovered via `testSuite` with a retry count. -/
+syntax (name := runAllSuitesTermRetry) "runAllSuites" "(" "retry" ":=" term ")" : term
+
+@[term_elab runAllSuitesTermRetry]
+def elabRunAllSuitesRetry : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: _ :: _ :: retryStx :: _ =>
+      elabRunAllSuitesCore none (some ⟨retryStx⟩) expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+/-- Run all registered test suites discovered via `testSuite` with timeout and retry. -/
+syntax (name := runAllSuitesTermTimeoutRetry)
+  "runAllSuites" "(" "timeout" ":=" term ")" "(" "retry" ":=" term ")" : term
+
+@[term_elab runAllSuitesTermTimeoutRetry]
+def elabRunAllSuitesTimeoutRetry : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: _ :: _ :: retryStx :: _ =>
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+/-- Run all registered test suites discovered via `testSuite` with retry and timeout. -/
+syntax (name := runAllSuitesTermRetryTimeout)
+  "runAllSuites" "(" "retry" ":=" term ")" "(" "timeout" ":=" term ")" : term
+
+@[term_elab runAllSuitesTermRetryTimeout]
+def elabRunAllSuitesRetryTimeout : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: _ :: _ :: retryStx :: _ :: _ :: _ :: _ :: timeoutStx :: _ =>
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 

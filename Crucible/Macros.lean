@@ -43,11 +43,24 @@ def getRegisteredTests (env : Environment) : Array Name :=
 
 /-! ## Test Syntax -/
 
+/-! ## Test Syntax -/
+
 /-- Syntax for defining a test case: `test "description" := do body` -/
 syntax (name := testDecl) "test " str " := " doSeq : command
 
 /-- Syntax for defining a test case with timeout: `test "description" (timeout := 5000) := do body` -/
 syntax (name := testDeclTimeout) "test " str "(" "timeout" ":=" term ")" " := " doSeq : command
+
+/-- Syntax for defining a test case with retry: `test "description" (retry := 3) := do body` -/
+syntax (name := testDeclRetry) "test " str "(" "retry" ":=" term ")" " := " doSeq : command
+
+/-- Syntax for defining a test case with timeout and retry. -/
+syntax (name := testDeclTimeoutRetry)
+  "test " str "(" "timeout" ":=" term ")" "(" "retry" ":=" term ")" " := " doSeq : command
+
+/-- Syntax for defining a test case with retry and timeout. -/
+syntax (name := testDeclRetryTimeout)
+  "test " str "(" "retry" ":=" term ")" "(" "timeout" ":=" term ")" " := " doSeq : command
 
 /-! ## Helper Functions -/
 
@@ -82,7 +95,7 @@ private def mkTestName (desc : String) (ns : Name) : CommandElabM Name := do
 /-! ## Test Elaborator -/
 
 private def elabTestCore (desc : TSyntax `str) (body : TSyntax `Lean.Parser.Term.doSeq)
-    (timeoutOpt : Option (TSyntax `term)) : CommandElabM Unit := do
+    (timeoutOpt : Option (TSyntax `term)) (retryOpt : Option (TSyntax `term)) : CommandElabM Unit := do
   let descStr := desc.getString
   let ns ← getCurrNamespace
   let defName ← mkTestName descStr ns
@@ -90,8 +103,17 @@ private def elabTestCore (desc : TSyntax `str) (body : TSyntax `Lean.Parser.Term
 
   -- Generate the TestCase definition
   let cmd ←
-    match timeoutOpt with
-    | some timeoutVal =>
+    match timeoutOpt, retryOpt with
+    | some timeoutVal, some retryVal =>
+      `(command|
+        private def $defId : TestCase := {
+          name := $desc
+          run := do $body
+          timeoutMs := some $timeoutVal:term
+          retryCount := some $retryVal:term
+        }
+      )
+    | some timeoutVal, none =>
       `(command|
         private def $defId : TestCase := {
           name := $desc
@@ -99,7 +121,15 @@ private def elabTestCore (desc : TSyntax `str) (body : TSyntax `Lean.Parser.Term
           timeoutMs := some $timeoutVal:term
         }
       )
-    | none =>
+    | none, some retryVal =>
+      `(command|
+        private def $defId : TestCase := {
+          name := $desc
+          run := do $body
+          retryCount := some $retryVal:term
+        }
+      )
+    | none, none =>
       `(command|
         private def $defId : TestCase := {
           name := $desc
@@ -116,7 +146,7 @@ private def elabTestCore (desc : TSyntax `str) (body : TSyntax `Lean.Parser.Term
 def elabTest : CommandElab := fun stx => do
   match stx with
   | `(command| test $desc:str := $body:doSeq) =>
-    elabTestCore desc body none
+    elabTestCore desc body none none
   | _ => throwUnsupportedSyntax
 
 @[command_elab testDeclTimeout]
@@ -125,7 +155,37 @@ def elabTestTimeout : CommandElab := fun stx => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: desc :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: body :: _ =>
-      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩)
+      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩) none
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab testDeclRetry]
+def elabTestRetry : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: desc :: _ :: _ :: _ :: retryStx :: _ :: _ :: body :: _ =>
+      elabTestCore ⟨desc⟩ ⟨body⟩ none (some ⟨retryStx⟩)
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab testDeclTimeoutRetry]
+def elabTestTimeoutRetry : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: desc :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: _ :: _ :: _ :: retryStx :: _ :: _ :: body :: _ =>
+      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩)
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab testDeclRetryTimeout]
+def elabTestRetryTimeout : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: desc :: _ :: _ :: _ :: retryStx :: _ :: _ :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: body :: _ =>
+      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩)
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
