@@ -49,7 +49,7 @@ import MyTests
 open Crucible
 
 def main : IO UInt32 := do
-  runTests "Arithmetic" MyTests.cases
+  runAllSuites
 ```
 
 ## Assertions
@@ -68,6 +68,7 @@ def main : IO UInt32 := do
 - **Declarative syntax**: Use `test "name" := do` to define tests
 - **Test suites**: Group tests with `testSuite "name"`
 - **Automatic collection**: `#generate_tests` collects all tests in the namespace
+- **Automatic suite runner**: `runAllSuites` runs every registered suite
 - **Clean output**: Formatted test results with pass/fail counts
 - **IO support**: Tests run in `IO`, supporting effectful operations
 

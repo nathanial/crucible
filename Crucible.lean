@@ -35,6 +35,6 @@ import MyTests
 open Crucible
 
 def main : IO UInt32 := do
-  runTests "My Test Suite" MyTests.cases
+  runAllSuites
 ```
 -/
