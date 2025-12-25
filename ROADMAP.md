@@ -4,60 +4,100 @@ This document outlines potential improvements, new features, and cleanup opportu
 
 ---
 
+## Implemented Features
+
+The following features have been implemented and are available in the current release.
+
+### [IMPLEMENTED] Automatic Suite Discovery and Runner
+
+**Status:** Complete
+
+The `runAllSuites` function automatically discovers and runs all registered test suites without requiring manual enumeration. Supports optional timeout and retry parameters:
+
+```lean
+def main : IO UInt32 := do
+  runAllSuites                                    -- basic usage
+  runAllSuites (timeout := 5000)                  -- with timeout
+  runAllSuites (retry := 2)                       -- with retry
+  runAllSuites (timeout := 5000) (retry := 2)    -- both
+```
+
+**Location:** `Crucible/Core.lean` lines 164-266
+
+---
+
+### [IMPLEMENTED] Approximate Equality Assertions for Floating-Point
+
+**Status:** Complete
+
+Built-in assertions for approximate float equality with configurable epsilon tolerance:
+
+```lean
+shouldBeNear actual expected eps      -- eps defaults to 0.0001
+shouldBeApprox actual expected eps    -- alias for shouldBeNear
+floatNear a b eps                     -- helper predicate (returns Bool)
+```
+
+**Location:** `Crucible/Core.lean` lines 46-57
+
+---
+
+### [IMPLEMENTED] Test Timeout Support
+
+**Status:** Complete
+
+Per-test and suite-wide timeout configuration:
+
+```lean
+test "network call" (timeout := 5000) := do
+  someNetworkCall
+
+-- Or configure via TestCase directly:
+tc.withTimeout 5000
+
+-- Or set default for all tests:
+runAllSuites (timeout := 10000)
+```
+
+**Location:** `Crucible/Core.lean` lines 16, 19-21, 99-118; `Crucible/Macros.lean` lines 51-63
+
+---
+
+### [IMPLEMENTED] Test Retry Support
+
+**Status:** Complete
+
+Per-test and suite-wide retry configuration for flaky tests:
+
+```lean
+test "flaky test" (retry := 3) := do
+  flakyOperation
+
+-- Or configure via TestCase directly:
+tc.withRetry 3
+
+-- Or set default for all tests:
+runAllSuites (retry := 2)
+```
+
+**Location:** `Crucible/Core.lean` lines 17, 23-25, 126-136; `Crucible/Macros.lean` lines 54-63
+
+---
+
+### [IMPLEMENTED] Rich Comparison Assertions (Partial)
+
+**Status:** Partial - some assertions implemented
+
+Currently available:
+- `shouldContain list elem` - Check list contains element
+- `shouldHaveLength list n` - Check list has expected length
+- `shouldMatch val pred desc` - Check value satisfies predicate
+
+**Location:** `Crucible/Core.lean` lines 79-92
+
+---
+
 ## Feature Proposals
-
-### [Priority: High] Automatic Suite Discovery and Runner
-
-**Description:** Add a `runAllSuites` function that automatically discovers and runs all registered test suites without requiring manual enumeration in `main`.
-
-**Rationale:** Currently, projects like `protolean`, `collimator`, and `wisp` must manually list each test suite in their `main` function (see `/Users/Shared/Projects/lean-workspace/protolean/Tests/Main.lean` lines 24-76). This is error-prone and requires updating when new test files are added. The `SuiteRegistry` already tracks suites via environment extension but provides no automatic runner.
-
-**Affected Files:**
-- `Crucible/SuiteRegistry.lean` - Add runner that iterates over `getAllSuites`
-- `Crucible/Core.lean` - Add `runAllSuites : IO UInt32`
-
-**Estimated Effort:** Small
-
-**Dependencies:** None
-
----
-
-### [Priority: High] Approximate Equality Assertions for Floating-Point
-
-**Description:** Add built-in assertions for approximate float/number equality with configurable epsilon tolerance.
-
-**Rationale:** Multiple projects define their own `approxEq` helpers:
-- `/Users/Shared/Projects/lean-workspace/tincture/TinctureTests/ColorTests.lean` lines 14-22
-- `/Users/Shared/Projects/lean-workspace/tincture/TinctureTests/HarmonyTests.lean` line 14
-- `/Users/Shared/Projects/lean-workspace/tincture/TinctureTests/ContrastTests.lean` line 14
-- `/Users/Shared/Projects/lean-workspace/afferent/Afferent/Tests/Framework.lean` lines 12-19
-
-These are all slightly different implementations of the same concept, indicating a missing core assertion.
-
-**Affected Files:**
-- `Crucible/Core.lean` - Add `shouldBeNear`, `shouldBeApprox` assertions
-
-**Estimated Effort:** Small
-
-**Dependencies:** None
-
----
-
-### [Priority: High] Test Timeout Support
-
-**Description:** Add ability to specify timeouts for individual tests or test suites.
-
-**Rationale:** Tests that involve I/O, network calls, or complex computations may hang. The wisp tests at `/Users/Shared/Projects/lean-workspace/wisp/Tests/Main.lean` demonstrate real-world need for timeouts (lines 233-253). Having timeout support built into the framework prevents hung test runs.
-
-**Affected Files:**
-- `Crucible/Core.lean` - Add `TestCase.withTimeout` or `runTestWithTimeout`
-- `Crucible/Macros.lean` - Add syntax for `test "name" (timeout := 5000) := do`
-
-**Estimated Effort:** Medium
-
-**Dependencies:** None
-
----
 
 ### [Priority: Medium] Expected Failure / Skip Test Support
 
@@ -207,13 +247,13 @@ These are all slightly different implementations of the same concept, indicating
 
 ## Code Improvements
 
-### [Priority: High] Unified Test Runner Interface
+### [Priority: Low] Structured Test Results Type
 
-**Current State:** The `runTests` function returns `IO UInt32` where the exit code represents failure count. Projects must manually accumulate exit codes (see protolean, collimator, wisp main functions).
+**Current State:** The `runAllSuites` function now handles automatic suite discovery and aggregation, returning `IO UInt32`. Projects no longer need to manually accumulate exit codes.
 
-**Proposed Change:** Return a structured `TestResults` type with pass/fail counts, timing, and provide a standard `toExitCode` method.
+**Proposed Enhancement:** Return a structured `TestResults` type with pass/fail counts per suite, timing information, and provide a standard `toExitCode` method for richer reporting.
 
-**Benefits:** Cleaner API, better composability, enables richer reporting.
+**Benefits:** Enables richer reporting, timing analysis, and programmatic access to results.
 
 **Affected Files:**
 - `Crucible/Core.lean`
@@ -328,37 +368,38 @@ These are all slightly different implementations of the same concept, indicating
 
 ---
 
-### [Priority: Low] Add CLAUDE.md Project Documentation
+### [COMPLETED] Add CLAUDE.md Project Documentation
 
-**Issue:** Unlike other projects in the workspace, crucible lacks a CLAUDE.md file for AI assistant guidance.
+**Status:** Documented in workspace-level CLAUDE.md
 
-**Location:** Project root
-
-**Action Required:** Create CLAUDE.md documenting:
-- Build commands
-- Architecture overview
-- Testing approach (meta - how to test the test framework)
-
-**Estimated Effort:** Small
+The crucible project is documented in `/Users/Shared/Projects/lean-workspace/CLAUDE.md` which provides:
+- Build commands (`lake build`)
+- Architecture overview (Core, Macros, SuiteRegistry modules)
+- Usage patterns and dependent projects list
 
 ---
 
 ## API Enhancements
 
-### [Priority: High] Rich Comparison Assertions
+### [Priority: Medium] Additional Comparison Assertions
 
-**Description:** Add assertions that provide better diff output for complex types.
+**Description:** Extend the existing comparison assertions with more specialized variants.
 
 **Proposed Additions:**
-- `shouldContainAll` - Check list contains all expected elements
+- `shouldContainAll` - Check list contains all expected elements (partial: `shouldContain` exists for single element)
 - `shouldHaveKeys` - Check map/dict has expected keys
 - `shouldStartWith`, `shouldEndWith` - String prefix/suffix checks
 - `shouldMatchRegex` - Regular expression matching
 
+**Already Implemented:**
+- `shouldContain` - single element check
+- `shouldHaveLength` - list length check
+- `shouldMatch` - predicate-based matching
+
 **Affected Files:**
 - `Crucible/Core.lean`
 
-**Estimated Effort:** Medium
+**Estimated Effort:** Small
 
 ---
 
