@@ -24,6 +24,19 @@ def TestCase.withTimeout (tc : TestCase) (timeoutMs : Nat) : TestCase :=
 def TestCase.withRetry (tc : TestCase) (retryCount : Nat) : TestCase :=
   { tc with retryCount := some retryCount }
 
+/-- Results from running a test suite. -/
+structure TestResults where
+  passed : Nat := 0
+  failed : Nat := 0
+  deriving Repr
+
+/-- Total number of tests run. -/
+def TestResults.total (r : TestResults) : Nat := r.passed + r.failed
+
+/-- Merge two test results by summing their counts. -/
+def TestResults.merge (a b : TestResults) : TestResults :=
+  { passed := a.passed + b.passed, failed := a.failed + b.failed }
+
 /-- Assert that a condition is true. -/
 def ensure (cond : Bool) (msg : String) : IO Unit := do
   if !cond then
@@ -144,7 +157,7 @@ def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
 /-- Run a list of test cases and report results. -/
 def runTests (name : String) (cases : List TestCase)
     (defaultTimeoutMs : Option Nat := none)
-    (defaultRetryCount : Option Nat := none) : IO UInt32 := do
+    (defaultRetryCount : Option Nat := none) : IO TestResults := do
   IO.println s!"\n{name}"
   IO.println ("─".intercalate (List.replicate name.length ""))
   let mut passed := 0
@@ -155,7 +168,34 @@ def runTests (name : String) (cases : List TestCase)
     else
       failed := failed + 1
   IO.println s!"\nResults: {passed} passed, {failed} failed"
-  return if failed > 0 then 1 else 0
+  return { passed, failed }
+
+/-- Format a Float with a fixed number of decimal places. -/
+private def formatFloat (f : Float) (decimals : Nat) : String :=
+  let factor := Float.pow 10.0 decimals.toFloat
+  let rounded := Float.round (f * factor) / factor
+  let s := toString rounded
+  -- Ensure we have the right number of decimal places
+  match s.splitOn "." with
+  | [whole] => s!"{whole}.{"0".intercalate (List.replicate decimals "")}"
+  | [whole, frac] =>
+    if frac.length < decimals then
+      s!"{whole}.{frac}{"0".intercalate (List.replicate (decimals - frac.length) "")}"
+    else
+      s!"{whole}.{frac.take decimals}"
+  | _ => s
+
+/-- Print a summary of test results across all suites. -/
+def printSummary (results : TestResults) (suiteCount : Nat) (elapsedMs : Nat) : IO Unit := do
+  let total := results.total
+  let pct := if total > 0 then (results.passed.toFloat / total.toFloat) * 100.0 else 100.0
+  let secs := elapsedMs.toFloat / 1000.0
+  IO.println ""
+  IO.println "────────────────────────────────────────"
+  IO.println s!"Summary: {results.passed} passed, {results.failed} failed ({formatFloat pct 1}%)"
+  IO.println s!"         {suiteCount} suites, {total} tests total"
+  IO.println s!"         Completed in {formatFloat secs 2}s"
+  IO.println "────────────────────────────────────────"
 
 /-! ## Automatic Suite Runner -/
 
@@ -201,11 +241,15 @@ private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
     | none => `(term| none)
 
   let body : TSyntax `term ← `(term| do
+    let startTime ← IO.monoMsNow
     let suites : Array (String × List _root_.Crucible.TestCase) := #[$[$suiteEntries],*]
-    let mut exitCode : UInt32 := 0
+    let mut results : _root_.Crucible.TestResults := { passed := 0, failed := 0 }
     for (name, cases) in suites do
-      exitCode := exitCode + (← _root_.Crucible.runTests name cases $timeoutTerm $retryTerm)
-    return exitCode
+      let r ← _root_.Crucible.runTests name cases $timeoutTerm $retryTerm
+      results := _root_.Crucible.TestResults.merge results r
+    let endTime ← IO.monoMsNow
+    _root_.Crucible.printSummary results suites.size (endTime - startTime)
+    return if results.failed > 0 then 1 else 0
   )
 
   elabTerm body expectedType?
