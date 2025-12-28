@@ -4,99 +4,6 @@ This document outlines potential improvements, new features, and cleanup opportu
 
 ---
 
-## Implemented Features
-
-The following features have been implemented and are available in the current release.
-
-### [IMPLEMENTED] Automatic Suite Discovery and Runner
-
-**Status:** Complete
-
-The `runAllSuites` function automatically discovers and runs all registered test suites without requiring manual enumeration. Supports optional timeout and retry parameters:
-
-```lean
-def main : IO UInt32 := do
-  runAllSuites                                    -- basic usage
-  runAllSuites (timeout := 5000)                  -- with timeout
-  runAllSuites (retry := 2)                       -- with retry
-  runAllSuites (timeout := 5000) (retry := 2)    -- both
-```
-
-**Location:** `Crucible/Core.lean` lines 164-266
-
----
-
-### [IMPLEMENTED] Approximate Equality Assertions for Floating-Point
-
-**Status:** Complete
-
-Built-in assertions for approximate float equality with configurable epsilon tolerance:
-
-```lean
-shouldBeNear actual expected eps      -- eps defaults to 0.0001
-shouldBeApprox actual expected eps    -- alias for shouldBeNear
-floatNear a b eps                     -- helper predicate (returns Bool)
-```
-
-**Location:** `Crucible/Core.lean` lines 46-57
-
----
-
-### [IMPLEMENTED] Test Timeout Support
-
-**Status:** Complete
-
-Per-test and suite-wide timeout configuration:
-
-```lean
-test "network call" (timeout := 5000) := do
-  someNetworkCall
-
--- Or configure via TestCase directly:
-tc.withTimeout 5000
-
--- Or set default for all tests:
-runAllSuites (timeout := 10000)
-```
-
-**Location:** `Crucible/Core.lean` lines 16, 19-21, 99-118; `Crucible/Macros.lean` lines 51-63
-
----
-
-### [IMPLEMENTED] Test Retry Support
-
-**Status:** Complete
-
-Per-test and suite-wide retry configuration for flaky tests:
-
-```lean
-test "flaky test" (retry := 3) := do
-  flakyOperation
-
--- Or configure via TestCase directly:
-tc.withRetry 3
-
--- Or set default for all tests:
-runAllSuites (retry := 2)
-```
-
-**Location:** `Crucible/Core.lean` lines 17, 23-25, 126-136; `Crucible/Macros.lean` lines 54-63
-
----
-
-### [IMPLEMENTED] Rich Comparison Assertions (Partial)
-
-**Status:** Partial - some assertions implemented
-
-Currently available:
-- `shouldContain list elem` - Check list contains element
-- `shouldHaveLength list n` - Check list has expected length
-- `shouldMatch val pred desc` - Check value satisfies predicate
-
-**Location:** `Crucible/Core.lean` lines 79-92
-
----
-
 ## Feature Proposals
 
 ### [Priority: Medium] Expected Failure / Skip Test Support
@@ -264,7 +171,7 @@ Currently available:
 
 ### [Priority: Medium] Improve Test Name Collision Handling
 
-**Current State:** In `Crucible/Macros.lean` lines 62-77, test name collisions are handled by appending numeric suffixes. This happens silently.
+**Current State:** In `Crucible/Macros.lean` lines 69-93, test name collisions are handled by appending numeric suffixes. This happens silently.
 
 **Proposed Change:** Add a warning when duplicate test names are detected, or make the generated name more predictable (include line number).
 
@@ -312,9 +219,9 @@ Currently available:
 
 ### [Priority: High] Standardize Infix Operator Documentation
 
-**Issue:** The infix operators `≡` and `≡?` defined at lines 69-70 of `Crucible/Core.lean` lack comprehensive documentation about their precedence and behavior.
+**Issue:** The infix operators `≡` and `≡?` defined at lines 108-109 of `Crucible/Core.lean` lack comprehensive documentation about their precedence and behavior.
 
-**Location:** `/Users/Shared/Projects/lean-workspace/crucible/Crucible/Core.lean` lines 69-70
+**Location:** `/Users/Shared/Projects/lean-workspace/crucible/Crucible/Core.lean` lines 108-109
 
 **Action Required:** Add detailed docstrings explaining:
 - What each operator does
@@ -328,9 +235,9 @@ Currently available:
 
 ### [Priority: Medium] Remove Legacy `ensureEq` Signature
 
-**Issue:** The `ensureEq` function at line 20 has a non-standard parameter order (`msg, expected, actual`) compared to modern assertions (`actual, expected`). The comment says "legacy signature for backwards compatibility."
+**Issue:** The `ensureEq` function at line 46 has a non-standard parameter order (`msg, expected, actual`) compared to modern assertions (`actual, expected`). The comment says "legacy signature for backwards compatibility."
 
-**Location:** `/Users/Shared/Projects/lean-workspace/crucible/Crucible/Core.lean` line 19-22
+**Location:** `/Users/Shared/Projects/lean-workspace/crucible/Crucible/Core.lean` lines 46-48
 
 **Action Required:**
 1. Evaluate if any dependents still use this
@@ -360,22 +267,11 @@ Currently available:
 
 **Issue:** Error messages across different assertions have slightly different formats. Some prefix with "Expected", others with "Assertion failed:".
 
-**Location:** `Crucible/Core.lean` lines 15-66
+**Location:** `Crucible/Core.lean` lines 40-105
 
 **Action Required:** Standardize error message format across all assertions for consistent output.
 
 **Estimated Effort:** Small
-
----
-
-### [COMPLETED] Add CLAUDE.md Project Documentation
-
-**Status:** Documented in workspace-level CLAUDE.md
-
-The crucible project is documented in `/Users/Shared/Projects/lean-workspace/CLAUDE.md` which provides:
-- Build commands (`lake build`)
-- Architecture overview (Core, Macros, SuiteRegistry modules)
-- Usage patterns and dependent projects list
 
 ---
 
