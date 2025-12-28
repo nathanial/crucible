@@ -10,8 +10,17 @@ Defines the fundamental TestCase structure and assertion functions.
 namespace Crucible
 
 /-- Check if a string contains a substring. -/
-private def containsSubstr (s : String) (sub : String) : Bool :=
+def containsSubstr (s : String) (sub : String) : Bool :=
   (s.splitOn sub).length > 1
+
+/-- String extension for substring checking. -/
+def String.containsSubstr (s : String) (sub : String) : Bool :=
+  Crucible.containsSubstr s sub
+
+/-- Helper to await a task and return its result. -/
+def awaitTask (task : IO (Task α)) : IO α := do
+  let t ← task
+  return t.get
 
 /-- A test case with a name and a monadic test action. -/
 structure TestCase where
@@ -254,6 +263,38 @@ def shouldBeEmpty [Repr α] (actual : List α) : IO Unit := do
 def shouldNotBeEmpty [Repr α] (actual : List α) : IO Unit := do
   if actual.isEmpty then
     throw <| IO.userError "Expected non-empty list, got []"
+
+/--
+Assert that an Except value is Ok and return the success value.
+Throws with the error message if it's an error.
+
+**Example:**
+```lean
+test "API call succeeds" := do
+  let result ← apiCall
+  let value ← shouldBeOk result "API call"
+  value ≡ expectedValue
+```
+-/
+def shouldBeOk [ToString ε] (result : Except ε α) (context : String := "Operation") : IO α := do
+  match result with
+  | .ok a => return a
+  | .error e => throw <| IO.userError s!"{context} failed: {e}"
+
+/--
+Assert that an Except value is an error.
+
+**Example:**
+```lean
+test "invalid input returns error" := do
+  let result := validate ""
+  shouldBeErr result
+```
+-/
+def shouldBeErr [Repr α] (result : Except ε α) : IO Unit := do
+  match result with
+  | .ok a => throw <| IO.userError s!"Expected error, got ok: {repr a}"
+  | .error _ => pure ()
 
 -- ============================================================================
 -- Assertion context / custom messages
