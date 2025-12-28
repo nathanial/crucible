@@ -25,37 +25,6 @@ This document outlines potential improvements, new features, and cleanup opportu
 
 ---
 
-### [Priority: Medium] Exception Expectation Assertions
-
-**Description:** Add assertions to verify that code throws expected exceptions.
-
-**Rationale:** The pattern `| .error e => throw (IO.userError ...)` appears throughout test code. Need assertions like `shouldThrow`, `shouldThrowWith msg`, and `shouldNotThrow` for testing error handling code paths.
-
-**Affected Files:**
-- `Crucible/Core.lean` - Add `shouldThrow`, `shouldThrowMatching`
-
-**Estimated Effort:** Small
-
-**Dependencies:** None
-
----
-
-### [Priority: Medium] Test Fixtures / Setup-Teardown Hooks
-
-**Description:** Add support for setup/teardown code that runs before/after each test or test suite.
-
-**Rationale:** Many tests need shared setup (database connections, file creation, network clients). The wisp tests show this pattern at `/Users/Shared/Projects/lean-workspace/wisp/Tests/Main.lean` lines 883-915 with manual `globalInit`/`globalCleanup` calls in main.
-
-**Affected Files:**
-- `Crucible/Core.lean` - Add `TestSuite` structure with `beforeAll`, `afterAll`, `beforeEach`, `afterEach` hooks
-- `Crucible/SuiteRegistry.lean` - Update `SuiteInfo` to include hook references
-
-**Estimated Effort:** Medium
-
-**Dependencies:** None
-
----
-
 ### [Priority: Medium] Parallel Test Execution
 
 **Description:** Add option to run tests in parallel using Lean's task system.
@@ -169,21 +138,6 @@ This document outlines potential improvements, new features, and cleanup opportu
 
 ---
 
-### [Priority: Medium] Improve Test Name Collision Handling
-
-**Current State:** In `Crucible/Macros.lean` lines 69-93, test name collisions are handled by appending numeric suffixes. This happens silently.
-
-**Proposed Change:** Add a warning when duplicate test names are detected, or make the generated name more predictable (include line number).
-
-**Benefits:** Better debugging experience, clearer test identification.
-
-**Affected Files:**
-- `Crucible/Macros.lean`
-
-**Estimated Effort:** Small
-
----
-
 ### [Priority: Medium] Type-Safe Test Tags
 
 **Current State:** No tagging system exists for categorizing tests.
@@ -217,37 +171,6 @@ This document outlines potential improvements, new features, and cleanup opportu
 
 ## Code Cleanup
 
-### [Priority: High] Standardize Infix Operator Documentation
-
-**Issue:** The infix operators `≡` and `≡?` defined at lines 108-109 of `Crucible/Core.lean` lack comprehensive documentation about their precedence and behavior.
-
-**Location:** `/Users/Shared/Projects/lean-workspace/crucible/Crucible/Core.lean` lines 108-109
-
-**Action Required:** Add detailed docstrings explaining:
-- What each operator does
-- Precedence level (currently 50)
-- How to type the Unicode characters
-- Comparison with named functions
-
-**Estimated Effort:** Small
-
----
-
-### [Priority: Medium] Remove Legacy `ensureEq` Signature
-
-**Issue:** The `ensureEq` function at line 46 has a non-standard parameter order (`msg, expected, actual`) compared to modern assertions (`actual, expected`). The comment says "legacy signature for backwards compatibility."
-
-**Location:** `/Users/Shared/Projects/lean-workspace/crucible/Crucible/Core.lean` lines 46-48
-
-**Action Required:**
-1. Evaluate if any dependents still use this
-2. Add deprecation warning
-3. Eventually remove or rename to `ensureEqLegacy`
-
-**Estimated Effort:** Small
-
----
-
 ### [Priority: Medium] Add Module-Level Documentation
 
 **Issue:** While there are file-level doc comments, the overall architecture and usage patterns are not well documented.
@@ -276,44 +199,6 @@ This document outlines potential improvements, new features, and cleanup opportu
 ---
 
 ## API Enhancements
-
-### [Priority: Medium] Additional Comparison Assertions
-
-**Description:** Extend the existing comparison assertions with more specialized variants.
-
-**Proposed Additions:**
-- `shouldContainAll` - Check list contains all expected elements (partial: `shouldContain` exists for single element)
-- `shouldHaveKeys` - Check map/dict has expected keys
-- `shouldStartWith`, `shouldEndWith` - String prefix/suffix checks
-- `shouldMatchRegex` - Regular expression matching
-
-**Already Implemented:**
-- `shouldContain` - single element check
-- `shouldHaveLength` - list length check
-- `shouldMatch` - predicate-based matching
-
-**Affected Files:**
-- `Crucible/Core.lean`
-
-**Estimated Effort:** Small
-
----
-
-### [Priority: Medium] Assertion Context / Custom Messages
-
-**Description:** Allow adding custom context messages to any assertion.
-
-**Example:**
-```lean
-(actual ≡ expected) |> withContext "checking user authentication"
-```
-
-**Affected Files:**
-- `Crucible/Core.lean`
-
-**Estimated Effort:** Small
-
----
 
 ### [Priority: Low] Soft Assertions
 

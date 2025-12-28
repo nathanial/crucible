@@ -62,6 +62,72 @@ syntax (name := testDeclTimeoutRetry)
 syntax (name := testDeclRetryTimeout)
   "test " str "(" "retry" ":=" term ")" "(" "timeout" ":=" term ")" " := " doSeq : command
 
+/-! ## Fixture Hook Syntax -/
+
+/-- Syntax for defining a beforeAll hook: `beforeAll := do body` -/
+syntax (name := beforeAllDecl) "beforeAll" " := " doSeq : command
+
+/-- Syntax for defining an afterAll hook: `afterAll := do body` -/
+syntax (name := afterAllDecl) "afterAll" " := " doSeq : command
+
+/-- Syntax for defining a beforeEach hook: `beforeEach := do body` -/
+syntax (name := beforeEachDecl) "beforeEach" " := " doSeq : command
+
+/-- Syntax for defining an afterEach hook: `afterEach := do body` -/
+syntax (name := afterEachDecl) "afterEach" " := " doSeq : command
+
+@[command_elab beforeAllDecl]
+def elabBeforeAll : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: body :: _ =>
+      let ref ← getRef
+      let defId := mkIdentFrom ref `beforeAll (canonical := true)
+      let cmd ← `(command| def $defId : IO Unit := do $(⟨body⟩):doSeq)
+      elabCommand cmd
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab afterAllDecl]
+def elabAfterAll : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: body :: _ =>
+      let ref ← getRef
+      let defId := mkIdentFrom ref `afterAll (canonical := true)
+      let cmd ← `(command| def $defId : IO Unit := do $(⟨body⟩):doSeq)
+      elabCommand cmd
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab beforeEachDecl]
+def elabBeforeEach : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: body :: _ =>
+      let ref ← getRef
+      let defId := mkIdentFrom ref `beforeEach (canonical := true)
+      let cmd ← `(command| def $defId : IO Unit := do $(⟨body⟩):doSeq)
+      elabCommand cmd
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab afterEachDecl]
+def elabAfterEach : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: body :: _ =>
+      let ref ← getRef
+      let defId := mkIdentFrom ref `afterEach (canonical := true)
+      let cmd ← `(command| def $defId : IO Unit := do $(⟨body⟩):doSeq)
+      elabCommand cmd
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
 /-! ## Helper Functions -/
 
 /-- Convert a test description string into a valid Lean identifier.
@@ -74,7 +140,8 @@ private def sanitizeName (s : String) : String :=
   let result := String.ofList chars
   result.splitOn "_" |>.filter (· ≠ "") |>.intersperse "_" |> String.join
 
-/-- Generate a unique test definition name from a description. -/
+/-- Generate a unique test definition name from a description.
+    Emits a warning if a duplicate test name is detected. -/
 private def mkTestName (desc : String) (ns : Name) : CommandElabM Name := do
   let base := sanitizeName desc
   let baseName := Name.mkSimple s!"test_{base}"
@@ -82,6 +149,8 @@ private def mkTestName (desc : String) (ns : Name) : CommandElabM Name := do
   let env ← getEnv
   let fullName := ns ++ baseName
   if env.contains fullName then
+    -- Emit a warning about the duplicate name
+    logWarning s!"Duplicate test name \"{desc}\" detected. Consider using unique test descriptions for clarity. The generated identifier will include a numeric suffix."
     -- Add a counter suffix
     let mut counter := 2
     let mut candidateName := ns ++ Name.mkSimple s!"test_{base}_{counter}"
