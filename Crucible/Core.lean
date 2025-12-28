@@ -10,12 +10,8 @@ Defines the fundamental TestCase structure and assertion functions.
 namespace Crucible
 
 /-- Check if a string contains a substring. -/
-def containsSubstr (s : String) (sub : String) : Bool :=
+private def containsSubstr (s : String) (sub : String) : Bool :=
   (s.splitOn sub).length > 1
-
-/-- String extension for substring checking. -/
-def String.containsSubstr (s : String) (sub : String) : Bool :=
-  Crucible.containsSubstr s sub
 
 /-- Helper to await a task and return its result. -/
 def awaitTask (task : IO (Task α)) : IO α := do
