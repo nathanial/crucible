@@ -368,13 +368,14 @@ test "parsing works" := do
 -/
 scoped infix:50 " ≡? " => shouldBeSome
 
-/-- Run a single test case. -/
+/-- Run a single test case. Uses dedicated threads to avoid thread pool exhaustion
+    when tests contain blocking FFI calls or for-loops with I/O operations. -/
 private def runWithTimeout (timeoutMs : Nat) (action : IO Unit) : IO Unit := do
-  let testTask ← IO.asTask (do
+  let testTask ← IO.asTask (prio := .dedicated) (do
     action
     return Sum.inl ()
   )
-  let timeoutTask ← IO.asTask (do
+  let timeoutTask ← IO.asTask (prio := .dedicated) (do
     IO.sleep (UInt32.ofNat timeoutMs)
     return Sum.inr ()
   )
