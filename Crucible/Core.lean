@@ -2,6 +2,7 @@ import Lean
 import Crucible.SuiteRegistry
 import Crucible.Filter
 import Crucible.CLI
+import Crucible.Output
 
 /-!
 # Core Test Framework Types
@@ -439,15 +440,17 @@ private def runWithTimeout (timeoutMs : Nat) (action : IO Unit) : IO Unit := do
 def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
     (defaultRetryCount : Option Nat := none)
     (beforeEach : Option (IO Unit) := none)
-    (afterEach : Option (IO Unit) := none) : IO TestOutcome := do
-  IO.print s!"  {tc.name}... "
+    (afterEach : Option (IO Unit) := none)
+    (progressPrefix : String := "") : IO TestOutcome := do
+  let startTime ← IO.monoMsNow
+  IO.print s!"{progressPrefix}  {tc.name}... "
 
   -- Handle skipped tests first
   if let some skipReason := tc.skip then
     let reasonStr := match skipReason with
       | .unconditional r => r
       | .conditional r => r
-    IO.println s!"⊘ (skipped: {reasonStr})"
+    IO.println s!"{Output.skipSymbol} (skipped: {reasonStr})"
     return .skipped
 
   try
@@ -474,33 +477,37 @@ def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
       -- Run afterEach even on failure
       if let some hook := afterEach then
         try hook catch _ => pure ()
+      let elapsed := (← IO.monoMsNow) - startTime
       -- For xfail tests, catching an exception is expected
       if tc.xfail then
         let reason := tc.xfailReason.getD "expected failure"
-        IO.println s!"✗ (xfail: {reason})"
+        IO.println s!"{Output.xfailSymbol} (xfail: {reason}) {Output.timing elapsed}"
         return .xfailed
-      IO.println s!"✗\n    {e}"
+      IO.println s!"{Output.failSymbol} {Output.timing elapsed}\n    {e}"
       return .failed
 
     -- Run afterEach hook if present (on success)
     if let some hook := afterEach then
       hook
 
+    let elapsed := (← IO.monoMsNow) - startTime
+
     -- Handle xfail tests that unexpectedly passed
     if tc.xfail then
       let reason := tc.xfailReason.getD "expected failure"
-      IO.println s!"✗ (XPASS - expected to fail: {reason})"
+      IO.println s!"{Output.xpassSymbol} (XPASS - expected to fail: {reason}) {Output.timing elapsed}"
       return .xpassed
 
-    IO.println "✓"
+    IO.println s!"{Output.passSymbol} {Output.timing elapsed}"
     return .passed
   catch e =>
+    let elapsed := (← IO.monoMsNow) - startTime
     -- For xfail tests, any exception means expected failure
     if tc.xfail then
       let reason := tc.xfailReason.getD "expected failure"
-      IO.println s!"✗ (xfail: {reason})"
+      IO.println s!"{Output.xfailSymbol} (xfail: {reason}) {Output.timing elapsed}"
       return .xfailed
-    IO.println s!"✗\n    {e}"
+    IO.println s!"{Output.failSymbol} {Output.timing elapsed}\n    {e}"
     return .failed
 
 /-- Run a list of test cases and report results. -/
@@ -508,7 +515,7 @@ def runTests (name : String) (cases : List TestCase)
     (defaultTimeoutMs : Option Nat := none)
     (defaultRetryCount : Option Nat := none)
     (fixture : Fixture := {}) : IO TestResults := do
-  IO.println s!"\n{name}"
+  IO.println s!"\n{Output.bold name}"
   IO.println ("─".intercalate (List.replicate name.length ""))
 
   -- Run beforeAll hook if present
@@ -516,18 +523,22 @@ def runTests (name : String) (cases : List TestCase)
     try
       hook
     catch e =>
-      IO.println s!"  [beforeAll failed: {e}]"
+      IO.println s!"  {Output.failSymbol} [beforeAll failed: {e}]"
       -- If beforeAll fails, skip all tests
       return { passed := 0, failed := cases.length }
 
+  let totalTests := cases.length
   let mut passed := 0
   let mut failed := 0
   let mut skipped := 0
   let mut xfailed := 0
   let mut xpassed := 0
+  let mut current := 0
 
   for tc in cases do
-    let outcome ← runTest tc defaultTimeoutMs defaultRetryCount fixture.beforeEach fixture.afterEach
+    current := current + 1
+    let progressPrefix := Output.progress current totalTests
+    let outcome ← runTest tc defaultTimeoutMs defaultRetryCount fixture.beforeEach fixture.afterEach progressPrefix
     match outcome with
     | .passed => passed := passed + 1
     | .failed => failed := failed + 1
@@ -540,16 +551,16 @@ def runTests (name : String) (cases : List TestCase)
     try
       hook
     catch e =>
-      IO.println s!"  [afterAll failed: {e}]"
+      IO.println s!"  {Output.failSymbol} [afterAll failed: {e}]"
 
-  -- Build result string with all non-zero counts
+  -- Build result string with all non-zero counts (colored)
   let mut parts : List String := []
-  if passed > 0 then parts := parts ++ [s!"{passed} passed"]
-  if failed > 0 then parts := parts ++ [s!"{failed} failed"]
-  if skipped > 0 then parts := parts ++ [s!"{skipped} skipped"]
-  if xfailed > 0 then parts := parts ++ [s!"{xfailed} xfailed"]
-  if xpassed > 0 then parts := parts ++ [s!"{xpassed} xpassed"]
-  if parts.isEmpty then parts := ["0 tests"]
+  if passed > 0 then parts := parts ++ [Output.green s!"{passed} passed"]
+  if failed > 0 then parts := parts ++ [Output.red s!"{failed} failed"]
+  if skipped > 0 then parts := parts ++ [Output.yellow s!"{skipped} skipped"]
+  if xfailed > 0 then parts := parts ++ [Output.yellow s!"{xfailed} xfailed"]
+  if xpassed > 0 then parts := parts ++ [Output.red s!"{xpassed} xpassed"]
+  if parts.isEmpty then parts := [Output.dim "0 tests"]
   IO.println s!"\nResults: {", ".intercalate parts}"
   return { passed, failed, skipped, xfailed, xpassed }
 
@@ -595,18 +606,27 @@ def printSummary (results : TestResults) (suiteCount : Nat) (elapsedMs : Nat) : 
   let pct := if total > 0 then (effectivePassed.toFloat / total.toFloat) * 100.0 else 100.0
   let secs := elapsedMs.toFloat / 1000.0
   IO.println ""
-  IO.println "────────────────────────────────────────"
-  -- Build summary line with all non-zero counts
-  let mut parts : List String := [s!"{results.passed} passed", s!"{results.failed} failed"]
-  if results.skipped > 0 then parts := parts ++ [s!"{results.skipped} skipped"]
-  if results.xfailed > 0 then parts := parts ++ [s!"{results.xfailed} xfailed"]
-  if results.xpassed > 0 then parts := parts ++ [s!"{results.xpassed} xpassed"]
-  IO.println s!"Summary: {", ".intercalate parts} ({formatFloat pct 1}%)"
+  IO.println (Output.dim "────────────────────────────────────────")
+  -- Build summary line with all non-zero counts (colored)
+  let mut parts : List String := []
+  parts := parts ++ [Output.boldGreen s!"{results.passed} passed"]
+  parts := parts ++ [if results.failed > 0 then Output.boldRed s!"{results.failed} failed"
+                     else Output.dim s!"{results.failed} failed"]
+  if results.skipped > 0 then parts := parts ++ [Output.yellow s!"{results.skipped} skipped"]
+  if results.xfailed > 0 then parts := parts ++ [Output.yellow s!"{results.xfailed} xfailed"]
+  if results.xpassed > 0 then parts := parts ++ [Output.red s!"{results.xpassed} xpassed"]
+  -- Color the percentage based on pass rate
+  let pctStr := formatFloat pct 1
+  let pctColored := if pct >= 100.0 then Output.boldGreen s!"{pctStr}%"
+                    else if pct >= 80.0 then Output.green s!"{pctStr}%"
+                    else if pct >= 50.0 then Output.yellow s!"{pctStr}%"
+                    else Output.red s!"{pctStr}%"
+  IO.println s!"Summary: {", ".intercalate parts} ({pctColored})"
   IO.println s!"         {suiteCount} suites, {total} tests run"
   if results.skipped > 0 then
-    IO.println s!"         {results.skipped} tests skipped"
+    IO.println s!"         {Output.yellow s!"{results.skipped} tests skipped"}"
   IO.println s!"         Completed in {formatFloat secs 2}s"
-  IO.println "────────────────────────────────────────"
+  IO.println (Output.dim "────────────────────────────────────────")
 
 /-- Print a summary of test results with filter information. -/
 def printFilteredSummary (results : TestResults) (suiteCount : Nat) (elapsedMs : Nat)

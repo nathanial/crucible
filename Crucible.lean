@@ -3,6 +3,7 @@ import Crucible.SuiteRegistry
 import Crucible.Macros
 import Crucible.Filter
 import Crucible.CLI
+import Crucible.Output
 
 /-!
 # Crucible
