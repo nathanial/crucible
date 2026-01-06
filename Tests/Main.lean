@@ -3,4 +3,4 @@ import Tests.Fixtures
 
 open Crucible
 
-def main : IO UInt32 := runAllSuites
+def main (args : List String) : IO UInt32 := runAllSuitesFiltered args

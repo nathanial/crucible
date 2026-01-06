@@ -1,5 +1,7 @@
 import Lean
 import Crucible.SuiteRegistry
+import Crucible.Filter
+import Crucible.CLI
 
 /-!
 # Core Test Framework Types
@@ -469,6 +471,26 @@ def runTests (name : String) (cases : List TestCase)
   IO.println s!"\nResults: {passed} passed, {failed} failed"
   return { passed, failed }
 
+/-- Run a list of test cases with filtering applied. -/
+def runTestsFiltered (name : String) (cases : List TestCase) (filter : TestFilter)
+    (defaultTimeoutMs : Option Nat := none)
+    (defaultRetryCount : Option Nat := none)
+    (fixture : Fixture := {}) : IO TestResults := do
+  -- Skip suite entirely if filter doesn't match suite name
+  if !filter.matchesSuite name then
+    return { passed := 0, failed := 0 }
+
+  -- Filter test cases by name
+  let filteredCases := if filter.testPatterns.isEmpty then cases
+    else cases.filter (fun tc => filter.matchesTest tc.name)
+
+  -- Skip if no tests match
+  if filteredCases.isEmpty then
+    return { passed := 0, failed := 0 }
+
+  -- Delegate to existing runTests
+  runTests name filteredCases defaultTimeoutMs defaultRetryCount fixture
+
 /-- Format a Float with a fixed number of decimal places. -/
 private def formatFloat (f : Float) (decimals : Nat) : String :=
   let factor := Float.pow 10.0 decimals.toFloat
@@ -495,6 +517,20 @@ def printSummary (results : TestResults) (suiteCount : Nat) (elapsedMs : Nat) : 
   IO.println s!"         {suiteCount} suites, {total} tests total"
   IO.println s!"         Completed in {formatFloat secs 2}s"
   IO.println "────────────────────────────────────────"
+
+/-- Print a summary of test results with filter information. -/
+def printFilteredSummary (results : TestResults) (suiteCount : Nat) (elapsedMs : Nat)
+    (filter : TestFilter) : IO Unit := do
+  printSummary results suiteCount elapsedMs
+  -- Print filter info if any filters were applied
+  if !filter.matchesAll then
+    IO.println ""
+    if !filter.suitePatterns.isEmpty then
+      IO.println s!"  Suite filter: {filter.suitePatterns}"
+    if !filter.testPatterns.isEmpty then
+      IO.println s!"  Test filter: {filter.testPatterns}"
+    if filter.exactMatch then
+      IO.println "  Match mode: exact"
 
 /-! ## Automatic Suite Runner -/
 
@@ -647,6 +683,195 @@ def elabRunAllSuitesRetryTimeout : TermElab := fun stx expectedType? => do
     match args.toList with
     | _ :: _ :: _ :: _ :: retryStx :: _ :: _ :: _ :: _ :: timeoutStx :: _ =>
       elabRunAllSuitesCore (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+/-! ## Filtered Suite Runner -/
+
+/-- Run all registered test suites with command-line filtering support.
+    Use this instead of `runAllSuites` when you want to filter tests via CLI args.
+
+    **Usage:**
+    ```lean
+    def main (args : List String) : IO UInt32 := runAllSuitesFiltered args
+    ```
+
+    **Command-line options:**
+    - `--test PATTERN` or `-t PATTERN`: Run only tests matching PATTERN
+    - `--suite PATTERN` or `-s PATTERN`: Run only suites matching PATTERN
+    - `--exact` or `-e`: Use exact match instead of substring
+    - `--help` or `-h`: Show help message
+
+    **Examples:**
+    ```bash
+    lake test -- --test parse           # Tests containing "parse"
+    lake test -- --suite "HTTP Parser"  # Suites containing "HTTP Parser"
+    lake test -- -t foo -t bar          # Tests matching "foo" OR "bar"
+    ```
+-/
+syntax (name := runAllSuitesFilteredTerm) "runAllSuitesFiltered" term : term
+
+/-- Run all suites with filtering and timeout. -/
+syntax (name := runAllSuitesFilteredTimeoutTerm)
+  "runAllSuitesFiltered" term "(" "timeout" ":=" term ")" : term
+
+/-- Run all suites with filtering and retry. -/
+syntax (name := runAllSuitesFilteredRetryTerm)
+  "runAllSuitesFiltered" term "(" "retry" ":=" term ")" : term
+
+/-- Run all suites with filtering, timeout, and retry. -/
+syntax (name := runAllSuitesFilteredTimeoutRetryTerm)
+  "runAllSuitesFiltered" term "(" "timeout" ":=" term ")" "(" "retry" ":=" term ")" : term
+
+/-- Run all suites with filtering, retry, and timeout. -/
+syntax (name := runAllSuitesFilteredRetryTimeoutTerm)
+  "runAllSuitesFiltered" term "(" "retry" ":=" term ")" "(" "timeout" ":=" term ")" : term
+
+private def elabRunAllSuitesFilteredCore (argsStx : TSyntax `term)
+    (timeoutOpt : Option (TSyntax `term))
+    (retryOpt : Option (TSyntax `term))
+    (expectedType? : Option Expr) : TermElabM Expr := do
+  let env ← getEnv
+  let ref ← getRef
+  -- Each entry is (name, cases, fixture)
+  let mut suiteEntries : Array (TSyntax `term) := #[]
+
+  for suite in SuiteRegistry.getAllSuites env do
+    let suiteNameLit : TSyntax `term := ⟨Syntax.mkStrLit suite.suiteName⟩
+    let casesName := SuiteRegistry.suiteCasesName suite
+    let casesIdent := mkIdentFrom ref casesName (canonical := true)
+    let casesTerm : TSyntax `term ←
+      if env.contains casesName then
+        `(term| $casesIdent)
+      else
+        logWarning s!"No `cases` definition found for suite {suite.suiteName} ({suite.ns}). Did you forget #generate_tests?"
+        `(term| ([] : List _root_.Crucible.TestCase))
+
+    -- Check for fixture hooks
+    let beforeAllName := suite.ns ++ `beforeAll
+    let afterAllName := suite.ns ++ `afterAll
+    let beforeEachName := suite.ns ++ `beforeEach
+    let afterEachName := suite.ns ++ `afterEach
+
+    let beforeAllTerm : TSyntax `term ←
+      if env.contains beforeAllName then
+        let ident := mkIdentFrom ref beforeAllName (canonical := true)
+        `(term| some $ident)
+      else
+        `(term| none)
+
+    let afterAllTerm : TSyntax `term ←
+      if env.contains afterAllName then
+        let ident := mkIdentFrom ref afterAllName (canonical := true)
+        `(term| some $ident)
+      else
+        `(term| none)
+
+    let beforeEachTerm : TSyntax `term ←
+      if env.contains beforeEachName then
+        let ident := mkIdentFrom ref beforeEachName (canonical := true)
+        `(term| some $ident)
+      else
+        `(term| none)
+
+    let afterEachTerm : TSyntax `term ←
+      if env.contains afterEachName then
+        let ident := mkIdentFrom ref afterEachName (canonical := true)
+        `(term| some $ident)
+      else
+        `(term| none)
+
+    let fixtureTerm : TSyntax `term ← `(term| ({
+      beforeAll := $beforeAllTerm
+      afterAll := $afterAllTerm
+      beforeEach := $beforeEachTerm
+      afterEach := $afterEachTerm
+    } : _root_.Crucible.Fixture))
+
+    let entry ← `(term| ($suiteNameLit, $casesTerm, $fixtureTerm))
+    suiteEntries := suiteEntries.push entry
+
+  let timeoutTerm : TSyntax `term ←
+    match timeoutOpt with
+    | some t => `(term| some $t)
+    | none => `(term| none)
+
+  let retryTerm : TSyntax `term ←
+    match retryOpt with
+    | some r => `(term| some $r)
+    | none => `(term| none)
+
+  -- Generate body with filter support - args come from parameter
+  let body : TSyntax `term ← `(term| do
+    let args : List String := $argsStx
+    -- Check for help first
+    if _root_.Crucible.CLI.helpRequested args then
+      _root_.Crucible.CLI.printHelp
+      return 0
+    let filter ← _root_.Crucible.CLI.parseArgs args
+    let startTime ← IO.monoMsNow
+    let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
+    let mut results : _root_.Crucible.TestResults := { passed := 0, failed := 0 }
+    let mut ranSuites := 0
+    for (name, cases, fixture) in suites do
+      let r ← _root_.Crucible.runTestsFiltered name cases filter $timeoutTerm $retryTerm fixture
+      if r.total > 0 then
+        ranSuites := ranSuites + 1
+      results := _root_.Crucible.TestResults.merge results r
+    let endTime ← IO.monoMsNow
+    _root_.Crucible.printFilteredSummary results ranSuites (endTime - startTime) filter
+    return if results.failed > 0 then 1 else 0
+  )
+
+  elabTerm body expectedType?
+
+@[term_elab runAllSuitesFilteredTerm]
+def elabRunAllSuitesFiltered : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ none none expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[term_elab runAllSuitesFilteredTimeoutTerm]
+def elabRunAllSuitesFilteredTimeout : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ :: _ :: _ :: timeoutStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) none expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[term_elab runAllSuitesFilteredRetryTerm]
+def elabRunAllSuitesFilteredRetry : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ :: _ :: _ :: retryStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ none (some ⟨retryStx⟩) expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[term_elab runAllSuitesFilteredTimeoutRetryTerm]
+def elabRunAllSuitesFilteredTimeoutRetry : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: _ :: _ :: retryStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[term_elab runAllSuitesFilteredRetryTimeoutTerm]
+def elabRunAllSuitesFilteredRetryTimeout : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ :: _ :: _ :: retryStx :: _ :: _ :: _ :: _ :: timeoutStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 

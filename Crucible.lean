@@ -1,13 +1,15 @@
 import Crucible.Core
 import Crucible.SuiteRegistry
 import Crucible.Macros
+import Crucible.Filter
+import Crucible.CLI
 
 /-!
 # Crucible
 
 A lightweight test framework for Lean 4.
 
-## Usage
+## Basic Usage
 
 ```lean
 import Crucible
@@ -34,7 +36,23 @@ import MyTests
 
 open Crucible
 
-def main : IO UInt32 := do
-  runAllSuites
+def main : IO UInt32 := runAllSuites
+```
+
+## Test Filtering
+
+Use `runAllSuitesFiltered` instead of `runAllSuites` to enable command-line filtering:
+
+```lean
+def main (args : List String) : IO UInt32 := runAllSuitesFiltered args
+```
+
+Then run with filter options:
+```bash
+lake test -- --test parse           # Tests containing "parse"
+lake test -- --suite "HTTP Parser"  # Suites containing "HTTP Parser"
+lake test -- -t foo -t bar          # Tests matching "foo" OR "bar"
+lake test -- --exact -t "my test"   # Exact match mode
+lake test -- --help                 # Show filter options
 ```
 -/
