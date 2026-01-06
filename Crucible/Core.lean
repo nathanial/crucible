@@ -20,12 +20,24 @@ def awaitTask (task : IO (Task α)) : IO α := do
   let t ← task
   return t.get
 
+/-- Why a test is being skipped. -/
+inductive SkipReason where
+  | unconditional : String → SkipReason
+  | conditional : String → SkipReason
+  deriving Repr, Inhabited
+
 /-- A test case with a name and a monadic test action. -/
 structure TestCase where
   name : String
   run : IO Unit
   timeoutMs : Option Nat := none
   retryCount : Option Nat := none
+  /-- If set, the test is skipped with the given reason. -/
+  skip : Option SkipReason := none
+  /-- If true, the test is expected to fail (xfail). A passing xfail test is a failure. -/
+  xfail : Bool := false
+  /-- Reason why the test is expected to fail. -/
+  xfailReason : Option String := none
 
 /-- Return a copy of the test case with a timeout configured (in milliseconds). -/
 def TestCase.withTimeout (tc : TestCase) (timeoutMs : Nat) : TestCase :=
@@ -35,10 +47,21 @@ def TestCase.withTimeout (tc : TestCase) (timeoutMs : Nat) : TestCase :=
 def TestCase.withRetry (tc : TestCase) (retryCount : Nat) : TestCase :=
   { tc with retryCount := some retryCount }
 
+/-- Return a copy of the test case marked as skipped. -/
+def TestCase.withSkip (tc : TestCase) (reason : String := "skipped") : TestCase :=
+  { tc with skip := some (.unconditional reason) }
+
+/-- Return a copy of the test case marked as expected to fail. -/
+def TestCase.withXfail (tc : TestCase) (reason : String := "expected failure") : TestCase :=
+  { tc with xfail := true, xfailReason := some reason }
+
 /-- Results from running a test suite. -/
 structure TestResults where
   passed : Nat := 0
   failed : Nat := 0
+  skipped : Nat := 0
+  xfailed : Nat := 0  -- expected failures that failed (good)
+  xpassed : Nat := 0  -- expected failures that passed (bad)
   deriving Repr
 
 /--
@@ -58,12 +81,22 @@ structure Fixture where
 /-- Empty fixture with no hooks. -/
 def Fixture.empty : Fixture := {}
 
-/-- Total number of tests run. -/
-def TestResults.total (r : TestResults) : Nat := r.passed + r.failed
+/-- Total number of tests run (excludes skipped). -/
+def TestResults.total (r : TestResults) : Nat := r.passed + r.failed + r.xfailed + r.xpassed
+
+/-- Total number of tests including skipped. -/
+def TestResults.totalWithSkipped (r : TestResults) : Nat := r.total + r.skipped
+
+/-- Check if all tests passed (xfailed counts as pass, xpassed counts as fail). -/
+def TestResults.allPassed (r : TestResults) : Bool := r.failed == 0 && r.xpassed == 0
 
 /-- Merge two test results by summing their counts. -/
 def TestResults.merge (a b : TestResults) : TestResults :=
-  { passed := a.passed + b.passed, failed := a.failed + b.failed }
+  { passed := a.passed + b.passed
+    failed := a.failed + b.failed
+    skipped := a.skipped + b.skipped
+    xfailed := a.xfailed + b.xfailed
+    xpassed := a.xpassed + b.xpassed }
 
 /-- Assert that a condition is true. -/
 def ensure (cond : Bool) (msg : String) : IO Unit := do
@@ -370,6 +403,15 @@ test "parsing works" := do
 -/
 scoped infix:50 " ≡? " => shouldBeSome
 
+/-- Result of running a single test. -/
+inductive TestOutcome where
+  | passed : TestOutcome
+  | failed : TestOutcome
+  | skipped : TestOutcome
+  | xfailed : TestOutcome  -- expected failure that failed (good)
+  | xpassed : TestOutcome  -- expected failure that passed (bad)
+  deriving Repr, Inhabited, BEq
+
 /-- Run a single test case. Uses dedicated threads to avoid thread pool exhaustion
     when tests contain blocking FFI calls or for-loops with I/O operations. -/
 private def runWithTimeout (timeoutMs : Nat) (action : IO Unit) : IO Unit := do
@@ -397,8 +439,17 @@ private def runWithTimeout (timeoutMs : Nat) (action : IO Unit) : IO Unit := do
 def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
     (defaultRetryCount : Option Nat := none)
     (beforeEach : Option (IO Unit) := none)
-    (afterEach : Option (IO Unit) := none) : IO Bool := do
+    (afterEach : Option (IO Unit) := none) : IO TestOutcome := do
   IO.print s!"  {tc.name}... "
+
+  -- Handle skipped tests first
+  if let some skipReason := tc.skip then
+    let reasonStr := match skipReason with
+      | .unconditional r => r
+      | .conditional r => r
+    IO.println s!"⊘ (skipped: {reasonStr})"
+    return .skipped
+
   try
     -- Run beforeEach hook if present
     if let some hook := beforeEach then
@@ -416,24 +467,41 @@ def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
           attempt (n + 1)
         else
           throw e
-    let result ← try
+    let testPassed ← try
       attempt 0
       pure true
     catch e =>
       -- Run afterEach even on failure
       if let some hook := afterEach then
         try hook catch _ => pure ()
-      throw e
+      -- For xfail tests, catching an exception is expected
+      if tc.xfail then
+        let reason := tc.xfailReason.getD "expected failure"
+        IO.println s!"✗ (xfail: {reason})"
+        return .xfailed
+      IO.println s!"✗\n    {e}"
+      return .failed
 
     -- Run afterEach hook if present (on success)
     if let some hook := afterEach then
       hook
 
+    -- Handle xfail tests that unexpectedly passed
+    if tc.xfail then
+      let reason := tc.xfailReason.getD "expected failure"
+      IO.println s!"✗ (XPASS - expected to fail: {reason})"
+      return .xpassed
+
     IO.println "✓"
-    return true
+    return .passed
   catch e =>
+    -- For xfail tests, any exception means expected failure
+    if tc.xfail then
+      let reason := tc.xfailReason.getD "expected failure"
+      IO.println s!"✗ (xfail: {reason})"
+      return .xfailed
     IO.println s!"✗\n    {e}"
-    return false
+    return .failed
 
 /-- Run a list of test cases and report results. -/
 def runTests (name : String) (cases : List TestCase)
@@ -454,12 +522,18 @@ def runTests (name : String) (cases : List TestCase)
 
   let mut passed := 0
   let mut failed := 0
+  let mut skipped := 0
+  let mut xfailed := 0
+  let mut xpassed := 0
 
   for tc in cases do
-    if ← runTest tc defaultTimeoutMs defaultRetryCount fixture.beforeEach fixture.afterEach then
-      passed := passed + 1
-    else
-      failed := failed + 1
+    let outcome ← runTest tc defaultTimeoutMs defaultRetryCount fixture.beforeEach fixture.afterEach
+    match outcome with
+    | .passed => passed := passed + 1
+    | .failed => failed := failed + 1
+    | .skipped => skipped := skipped + 1
+    | .xfailed => xfailed := xfailed + 1
+    | .xpassed => xpassed := xpassed + 1
 
   -- Run afterAll hook if present (always, even if tests failed)
   if let some hook := fixture.afterAll then
@@ -468,8 +542,16 @@ def runTests (name : String) (cases : List TestCase)
     catch e =>
       IO.println s!"  [afterAll failed: {e}]"
 
-  IO.println s!"\nResults: {passed} passed, {failed} failed"
-  return { passed, failed }
+  -- Build result string with all non-zero counts
+  let mut parts : List String := []
+  if passed > 0 then parts := parts ++ [s!"{passed} passed"]
+  if failed > 0 then parts := parts ++ [s!"{failed} failed"]
+  if skipped > 0 then parts := parts ++ [s!"{skipped} skipped"]
+  if xfailed > 0 then parts := parts ++ [s!"{xfailed} xfailed"]
+  if xpassed > 0 then parts := parts ++ [s!"{xpassed} xpassed"]
+  if parts.isEmpty then parts := ["0 tests"]
+  IO.println s!"\nResults: {", ".intercalate parts}"
+  return { passed, failed, skipped, xfailed, xpassed }
 
 /-- Run a list of test cases with filtering applied. -/
 def runTestsFiltered (name : String) (cases : List TestCase) (filter : TestFilter)
@@ -509,12 +591,20 @@ private def formatFloat (f : Float) (decimals : Nat) : String :=
 /-- Print a summary of test results across all suites. -/
 def printSummary (results : TestResults) (suiteCount : Nat) (elapsedMs : Nat) : IO Unit := do
   let total := results.total
-  let pct := if total > 0 then (results.passed.toFloat / total.toFloat) * 100.0 else 100.0
+  let effectivePassed := results.passed + results.xfailed  -- xfailed counts as "good"
+  let pct := if total > 0 then (effectivePassed.toFloat / total.toFloat) * 100.0 else 100.0
   let secs := elapsedMs.toFloat / 1000.0
   IO.println ""
   IO.println "────────────────────────────────────────"
-  IO.println s!"Summary: {results.passed} passed, {results.failed} failed ({formatFloat pct 1}%)"
-  IO.println s!"         {suiteCount} suites, {total} tests total"
+  -- Build summary line with all non-zero counts
+  let mut parts : List String := [s!"{results.passed} passed", s!"{results.failed} failed"]
+  if results.skipped > 0 then parts := parts ++ [s!"{results.skipped} skipped"]
+  if results.xfailed > 0 then parts := parts ++ [s!"{results.xfailed} xfailed"]
+  if results.xpassed > 0 then parts := parts ++ [s!"{results.xpassed} xpassed"]
+  IO.println s!"Summary: {", ".intercalate parts} ({formatFloat pct 1}%)"
+  IO.println s!"         {suiteCount} suites, {total} tests run"
+  if results.skipped > 0 then
+    IO.println s!"         {results.skipped} tests skipped"
   IO.println s!"         Completed in {formatFloat secs 2}s"
   IO.println "────────────────────────────────────────"
 
@@ -620,13 +710,13 @@ private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
   let body : TSyntax `term ← `(term| do
     let startTime ← IO.monoMsNow
     let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
-    let mut results : _root_.Crucible.TestResults := { passed := 0, failed := 0 }
+    let mut results : _root_.Crucible.TestResults := {}
     for (name, cases, fixture) in suites do
       let r ← _root_.Crucible.runTests name cases $timeoutTerm $retryTerm fixture
       results := _root_.Crucible.TestResults.merge results r
     let endTime ← IO.monoMsNow
     _root_.Crucible.printSummary results suites.size (endTime - startTime)
-    return if results.failed > 0 then 1 else 0
+    return if results.allPassed then 0 else 1
   )
 
   elabTerm body expectedType?
@@ -811,7 +901,7 @@ private def elabRunAllSuitesFilteredCore (argsStx : TSyntax `term)
     let filter ← _root_.Crucible.CLI.parseArgs args
     let startTime ← IO.monoMsNow
     let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
-    let mut results : _root_.Crucible.TestResults := { passed := 0, failed := 0 }
+    let mut results : _root_.Crucible.TestResults := {}
     let mut ranSuites := 0
     for (name, cases, fixture) in suites do
       let r ← _root_.Crucible.runTestsFiltered name cases filter $timeoutTerm $retryTerm fixture
@@ -820,7 +910,7 @@ private def elabRunAllSuitesFilteredCore (argsStx : TSyntax `term)
       results := _root_.Crucible.TestResults.merge results r
     let endTime ← IO.monoMsNow
     _root_.Crucible.printFilteredSummary results ranSuites (endTime - startTime) filter
-    return if results.failed > 0 then 1 else 0
+    return if results.allPassed then 0 else 1
   )
 
   elabTerm body expectedType?

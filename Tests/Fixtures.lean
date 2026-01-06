@@ -58,3 +58,32 @@ test "another test without fixtures" := do
 #generate_tests
 
 end Tests.NoFixtures
+
+namespace Tests.SkipXfail
+
+open Crucible
+
+testSuite "Skip and Xfail Tests"
+
+test "normal passing test" := do
+  1 + 1 ≡ 2
+
+test "skipped test with reason" (skip := "not implemented yet") := do
+  -- This test body won't be executed
+  throw <| IO.userError "This should not run"
+
+test "skipped test" (skip) := do
+  -- This test body won't be executed
+  throw <| IO.userError "This should not run"
+
+test "expected failure that fails" (xfail := "known bug #123") := do
+  -- This test is expected to fail
+  throw <| IO.userError "Expected error"
+
+test "expected failure simple" (xfail) := do
+  -- This test is expected to fail
+  ensure false "This is expected to fail"
+
+#generate_tests
+
+end Tests.SkipXfail

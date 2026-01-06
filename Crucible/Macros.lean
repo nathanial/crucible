@@ -62,6 +62,20 @@ syntax (name := testDeclTimeoutRetry)
 syntax (name := testDeclRetryTimeout)
   "test " str "(" "retry" ":=" term ")" "(" "timeout" ":=" term ")" " := " doSeq : command
 
+/-! ## Skip and Expected Failure Syntax -/
+
+/-- Syntax for a skipped test: `test "description" (skip := "reason") := do body` -/
+syntax (name := testDeclSkip) "test " str "(" "skip" ":=" str ")" " := " doSeq : command
+
+/-- Syntax for an expected failure test: `test "description" (xfail := "reason") := do body` -/
+syntax (name := testDeclXfail) "test " str "(" "xfail" ":=" str ")" " := " doSeq : command
+
+/-- Syntax for a skipped test with boolean: `test "description" (skip) := do body` -/
+syntax (name := testDeclSkipBool) "test " str "(" "skip" ")" " := " doSeq : command
+
+/-- Syntax for an expected failure test with boolean: `test "description" (xfail) := do body` -/
+syntax (name := testDeclXfailBool) "test " str "(" "xfail" ")" " := " doSeq : command
+
 /-! ## Fixture Hook Syntax -/
 
 /-- Syntax for defining a beforeAll hook: `beforeAll := do body` -/
@@ -164,41 +178,61 @@ private def mkTestName (desc : String) (ns : Name) : CommandElabM Name := do
 /-! ## Test Elaborator -/
 
 private def elabTestCore (desc : TSyntax `str) (body : TSyntax `Lean.Parser.Term.doSeq)
-    (timeoutOpt : Option (TSyntax `term)) (retryOpt : Option (TSyntax `term)) : CommandElabM Unit := do
+    (timeoutOpt : Option (TSyntax `term)) (retryOpt : Option (TSyntax `term))
+    (skipReason : Option String) (xfailReason : Option String) : CommandElabM Unit := do
   let descStr := desc.getString
   let ns ← getCurrNamespace
   let defName ← mkTestName descStr ns
   let defId := mkIdent defName
 
-  -- Generate the TestCase definition
-  let cmd ←
-    match timeoutOpt, retryOpt with
-    | some timeoutVal, some retryVal =>
+  -- Generate TestCase based on which options are set
+  let cmd ← match timeoutOpt, retryOpt, skipReason, xfailReason with
+    | some t, some r, none, none =>
       `(command|
         private def $defId : TestCase := {
           name := $desc
           run := do $body
-          timeoutMs := some $timeoutVal:term
-          retryCount := some $retryVal:term
+          timeoutMs := some $t
+          retryCount := some $r
         }
       )
-    | some timeoutVal, none =>
+    | some t, none, none, none =>
       `(command|
         private def $defId : TestCase := {
           name := $desc
           run := do $body
-          timeoutMs := some $timeoutVal:term
+          timeoutMs := some $t
         }
       )
-    | none, some retryVal =>
+    | none, some r, none, none =>
       `(command|
         private def $defId : TestCase := {
           name := $desc
           run := do $body
-          retryCount := some $retryVal:term
+          retryCount := some $r
         }
       )
-    | none, none =>
+    | none, none, some skipStr, none =>
+      let skipLit : TSyntax `str := ⟨Syntax.mkStrLit skipStr⟩
+      `(command|
+        private def $defId : TestCase := {
+          name := $desc
+          run := do $body
+          «skip» := some (SkipReason.unconditional $skipLit)
+        }
+      )
+    | none, none, none, some xfailStr =>
+      let xfailLit : TSyntax `str := ⟨Syntax.mkStrLit xfailStr⟩
+      `(command|
+        private def $defId : TestCase := {
+          name := $desc
+          run := do $body
+          «xfail» := true
+          xfailReason := some $xfailLit
+        }
+      )
+    | _, _, _, _ =>
+      -- Default case: no special options
       `(command|
         private def $defId : TestCase := {
           name := $desc
@@ -215,7 +249,7 @@ private def elabTestCore (desc : TSyntax `str) (body : TSyntax `Lean.Parser.Term
 def elabTest : CommandElab := fun stx => do
   match stx with
   | `(command| test $desc:str := $body:doSeq) =>
-    elabTestCore desc body none none
+    elabTestCore desc body none none none none
   | _ => throwUnsupportedSyntax
 
 @[command_elab testDeclTimeout]
@@ -224,7 +258,7 @@ def elabTestTimeout : CommandElab := fun stx => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: desc :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: body :: _ =>
-      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩) none
+      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩) none none none
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -234,7 +268,7 @@ def elabTestRetry : CommandElab := fun stx => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: desc :: _ :: _ :: _ :: retryStx :: _ :: _ :: body :: _ =>
-      elabTestCore ⟨desc⟩ ⟨body⟩ none (some ⟨retryStx⟩)
+      elabTestCore ⟨desc⟩ ⟨body⟩ none (some ⟨retryStx⟩) none none
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -244,7 +278,7 @@ def elabTestTimeoutRetry : CommandElab := fun stx => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: desc :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: _ :: _ :: _ :: retryStx :: _ :: _ :: body :: _ =>
-      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩)
+      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) none none
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -254,7 +288,51 @@ def elabTestRetryTimeout : CommandElab := fun stx => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: desc :: _ :: _ :: _ :: retryStx :: _ :: _ :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: body :: _ =>
-      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩)
+      elabTestCore ⟨desc⟩ ⟨body⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) none none
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+/-! ## Skip/Xfail Elaborators -/
+
+@[command_elab testDeclSkip]
+def elabTestSkip : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: desc :: _ :: _ :: _ :: reasonStx :: _ :: _ :: body :: _ =>
+      let reason := (⟨reasonStx⟩ : TSyntax `str).getString
+      elabTestCore ⟨desc⟩ ⟨body⟩ none none (some reason) none
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab testDeclXfail]
+def elabTestXfail : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: desc :: _ :: _ :: _ :: reasonStx :: _ :: _ :: body :: _ =>
+      let reason := (⟨reasonStx⟩ : TSyntax `str).getString
+      elabTestCore ⟨desc⟩ ⟨body⟩ none none none (some reason)
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab testDeclSkipBool]
+def elabTestSkipBool : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: desc :: _ :: _ :: _ :: _ :: body :: _ =>
+      elabTestCore ⟨desc⟩ ⟨body⟩ none none (some "skipped") none
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab testDeclXfailBool]
+def elabTestXfailBool : CommandElab := fun stx => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: desc :: _ :: _ :: _ :: _ :: body :: _ =>
+      elabTestCore ⟨desc⟩ ⟨body⟩ none none none (some "expected failure")
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
