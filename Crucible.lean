@@ -58,20 +58,37 @@ import MyProject.Tests
 
 open Crucible
 
+def main (args : List String) : IO UInt32 := runAllSuitesFiltered args
+```
+
+## Runner Variants
+
+**Exit Code API (default):**
+- `runAllSuites` → `IO UInt32`
+- `runAllSuitesFiltered args` → `IO UInt32`
+
+These return 0 on success, 1 on failure. Use for simple test runners.
+
+**Structured Results API:**
+- `runAllSuitesWithResults` → `IO TestResults`
+- `runAllSuitesFilteredWithResults args` → `IO TestResults`
+
+Use these when you need programmatic access to test results:
+
+```lean
 def main (args : List String) : IO UInt32 := do
-  let results ← runAllSuitesFiltered args
+  let results ← runAllSuitesFilteredWithResults args
+  -- Access aggregated counts
+  IO.println s!"Passed: {results.passed}, Failed: {results.failed}"
+  -- Iterate over individual suites
+  for suite in results.suites do
+    IO.println s!"{suite.name}: {suite.passed}/{suite.total} ({suite.elapsedMs}ms)"
   return results.toExitCode
 ```
 
-The `TestResults` type provides per-suite breakdown:
-```lean
--- Access aggregated counts
-IO.println s!"Passed: {results.passed}, Failed: {results.failed}"
-
--- Iterate over individual suites
-for suite in results.suites do
-  IO.println s!"{suite.name}: {suite.passed}/{suite.total} ({suite.elapsedMs}ms)"
-```
+All runners support optional parameters:
+- `(timeout := ms)` - Per-test timeout in milliseconds
+- `(retry := n)` - Retry failed tests n times
 
 ## Assertion Reference
 

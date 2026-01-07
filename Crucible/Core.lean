@@ -742,16 +742,24 @@ def printFilteredSummary (results : TestResults) (filter : TestFilter) : IO Unit
 
 open Lean Elab Term
 
-/-- Run all registered test suites discovered via `testSuite`. -/
+/-- Run all registered test suites discovered via `testSuite`. Returns exit code (0 = pass, 1 = fail). -/
 syntax (name := runAllSuitesTerm) "runAllSuites" : term
+
+/-- Run all registered test suites and return structured TestResults. -/
+syntax (name := runAllSuitesWithResultsTerm) "runAllSuitesWithResults" : term
 
 /-- Run all registered test suites discovered via `testSuite` with a timeout. -/
 syntax (name := runAllSuitesTermTimeout) "runAllSuites" "(" "timeout" ":=" term ")" : term
 
--- Syntax for a timeout-enabled suite runner.
+/-- Run all registered test suites with timeout and return structured TestResults. -/
+syntax (name := runAllSuitesWithResultsTermTimeout) "runAllSuitesWithResults" "(" "timeout" ":=" term ")" : term
 
+-- Core elaborator with returnResults flag for backwards compatibility
+-- returnResults = false: return IO UInt32 (exit code) - backwards compatible
+-- returnResults = true: return IO TestResults (structured results) - new API
 private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
     (retryOpt : Option (TSyntax `term))
+    (returnResults : Bool)
     (expectedType? : Option Expr) : TermElabM Expr := do
   let env ← getEnv
   let ref ← getRef
@@ -823,24 +831,43 @@ private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
     | some r => `(term| some $r)
     | none => `(term| none)
 
-  let body : TSyntax `term ← `(term| do
-    let startTime ← IO.monoMsNow
-    let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
-    let mut results : _root_.Crucible.TestResults := {}
-    for (name, cases, fixture) in suites do
-      let suiteResult ← _root_.Crucible.runTests name cases $timeoutTerm $retryTerm fixture
-      results := results.addSuite suiteResult
-    let endTime ← IO.monoMsNow
-    let finalResults := { results with totalElapsedMs := endTime - startTime }
-    _root_.Crucible.printSummary finalResults
-    return finalResults
-  )
+  let body : TSyntax `term ←
+    if returnResults then
+      `(term| do
+        let startTime ← IO.monoMsNow
+        let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
+        let mut results : _root_.Crucible.TestResults := {}
+        for (name, cases, fixture) in suites do
+          let suiteResult ← _root_.Crucible.runTests name cases $timeoutTerm $retryTerm fixture
+          results := results.addSuite suiteResult
+        let endTime ← IO.monoMsNow
+        let finalResults := { results with totalElapsedMs := endTime - startTime }
+        _root_.Crucible.printSummary finalResults
+        return finalResults
+      )
+    else
+      `(term| do
+        let startTime ← IO.monoMsNow
+        let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
+        let mut results : _root_.Crucible.TestResults := {}
+        for (name, cases, fixture) in suites do
+          let suiteResult ← _root_.Crucible.runTests name cases $timeoutTerm $retryTerm fixture
+          results := results.addSuite suiteResult
+        let endTime ← IO.monoMsNow
+        let finalResults := { results with totalElapsedMs := endTime - startTime }
+        _root_.Crucible.printSummary finalResults
+        return finalResults.toExitCode
+      )
 
   elabTerm body expectedType?
 
 @[term_elab runAllSuitesTerm]
 def elabRunAllSuites : TermElab := fun _stx expectedType? =>
-  elabRunAllSuitesCore none none expectedType?
+  elabRunAllSuitesCore none none false expectedType?
+
+@[term_elab runAllSuitesWithResultsTerm]
+def elabRunAllSuitesWithResults : TermElab := fun _stx expectedType? =>
+  elabRunAllSuitesCore none none true expectedType?
 
 @[term_elab runAllSuitesTermTimeout]
 def elabRunAllSuitesTimeout : TermElab := fun stx expectedType? => do
@@ -848,7 +875,17 @@ def elabRunAllSuitesTimeout : TermElab := fun stx expectedType? => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: _ :: _ :: _ :: timeoutStx :: _ =>
-      elabRunAllSuitesCore (some ⟨timeoutStx⟩) none expectedType?
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) none false expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[term_elab runAllSuitesWithResultsTermTimeout]
+def elabRunAllSuitesWithResultsTimeout : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: _ :: _ :: timeoutStx :: _ =>
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) none true expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -861,7 +898,7 @@ def elabRunAllSuitesRetry : TermElab := fun stx expectedType? => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: _ :: _ :: _ :: retryStx :: _ =>
-      elabRunAllSuitesCore none (some ⟨retryStx⟩) expectedType?
+      elabRunAllSuitesCore none (some ⟨retryStx⟩) false expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -875,7 +912,7 @@ def elabRunAllSuitesTimeoutRetry : TermElab := fun stx expectedType? => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: _ :: _ :: retryStx :: _ =>
-      elabRunAllSuitesCore (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) expectedType?
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) false expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -889,7 +926,51 @@ def elabRunAllSuitesRetryTimeout : TermElab := fun stx expectedType? => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: _ :: _ :: _ :: retryStx :: _ :: _ :: _ :: _ :: timeoutStx :: _ =>
-      elabRunAllSuitesCore (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) expectedType?
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) false expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+/-! ## Non-filtered Suite Runner (WithResults Variants) -/
+
+/-- Run all suites with retry and return structured TestResults. -/
+syntax (name := runAllSuitesWithResultsTermRetry)
+  "runAllSuitesWithResults" "(" "retry" ":=" term ")" : term
+
+@[term_elab runAllSuitesWithResultsTermRetry]
+def elabRunAllSuitesWithResultsRetry : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: _ :: _ :: retryStx :: _ =>
+      elabRunAllSuitesCore none (some ⟨retryStx⟩) true expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+/-- Run all suites with timeout, retry, and return structured TestResults. -/
+syntax (name := runAllSuitesWithResultsTermTimeoutRetry)
+  "runAllSuitesWithResults" "(" "timeout" ":=" term ")" "(" "retry" ":=" term ")" : term
+
+@[term_elab runAllSuitesWithResultsTermTimeoutRetry]
+def elabRunAllSuitesWithResultsTimeoutRetry : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: _ :: _ :: retryStx :: _ =>
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) true expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+/-- Run all suites with retry, timeout, and return structured TestResults. -/
+syntax (name := runAllSuitesWithResultsTermRetryTimeout)
+  "runAllSuitesWithResults" "(" "retry" ":=" term ")" "(" "timeout" ":=" term ")" : term
+
+@[term_elab runAllSuitesWithResultsTermRetryTimeout]
+def elabRunAllSuitesWithResultsRetryTimeout : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: _ :: _ :: _ :: retryStx :: _ :: _ :: _ :: _ :: timeoutStx :: _ =>
+      elabRunAllSuitesCore (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) true expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -934,9 +1015,13 @@ syntax (name := runAllSuitesFilteredTimeoutRetryTerm)
 syntax (name := runAllSuitesFilteredRetryTimeoutTerm)
   "runAllSuitesFiltered" term "(" "retry" ":=" term ")" "(" "timeout" ":=" term ")" : term
 
+-- Core elaborator with returnResults flag for backwards compatibility
+-- returnResults = false: return IO UInt32 (exit code) - backwards compatible
+-- returnResults = true: return IO TestResults (structured results) - new API
 private def elabRunAllSuitesFilteredCore (argsStx : TSyntax `term)
     (timeoutOpt : Option (TSyntax `term))
     (retryOpt : Option (TSyntax `term))
+    (returnResults : Bool)
     (expectedType? : Option Expr) : TermElabM Expr := do
   let env ← getEnv
   let ref ← getRef
@@ -1009,24 +1094,45 @@ private def elabRunAllSuitesFilteredCore (argsStx : TSyntax `term)
     | none => `(term| none)
 
   -- Generate body with filter support - args come from parameter
-  let body : TSyntax `term ← `(term| do
-    let args : List String := $argsStx
-    -- Check for help first
-    if _root_.Crucible.CLI.helpRequested args then
-      _root_.Crucible.CLI.printHelp
-      return {}  -- Return empty results on help
-    let filter ← _root_.Crucible.CLI.parseArgs args
-    let startTime ← IO.monoMsNow
-    let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
-    let mut results : _root_.Crucible.TestResults := {}
-    for (name, cases, fixture) in suites do
-      if let some suiteResult ← _root_.Crucible.runTestsFiltered name cases filter $timeoutTerm $retryTerm fixture then
-        results := results.addSuite suiteResult
-    let endTime ← IO.monoMsNow
-    let finalResults := { results with totalElapsedMs := endTime - startTime }
-    _root_.Crucible.printFilteredSummary finalResults filter
-    return finalResults
-  )
+  let body : TSyntax `term ←
+    if returnResults then
+      `(term| do
+        let args : List String := $argsStx
+        -- Check for help first
+        if _root_.Crucible.CLI.helpRequested args then
+          _root_.Crucible.CLI.printHelp
+          return {}  -- Return empty results on help
+        let filter ← _root_.Crucible.CLI.parseArgs args
+        let startTime ← IO.monoMsNow
+        let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
+        let mut results : _root_.Crucible.TestResults := {}
+        for (name, cases, fixture) in suites do
+          if let some suiteResult ← _root_.Crucible.runTestsFiltered name cases filter $timeoutTerm $retryTerm fixture then
+            results := results.addSuite suiteResult
+        let endTime ← IO.monoMsNow
+        let finalResults := { results with totalElapsedMs := endTime - startTime }
+        _root_.Crucible.printFilteredSummary finalResults filter
+        return finalResults
+      )
+    else
+      `(term| do
+        let args : List String := $argsStx
+        -- Check for help first
+        if _root_.Crucible.CLI.helpRequested args then
+          _root_.Crucible.CLI.printHelp
+          return 0  -- Return success on help
+        let filter ← _root_.Crucible.CLI.parseArgs args
+        let startTime ← IO.monoMsNow
+        let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
+        let mut results : _root_.Crucible.TestResults := {}
+        for (name, cases, fixture) in suites do
+          if let some suiteResult ← _root_.Crucible.runTestsFiltered name cases filter $timeoutTerm $retryTerm fixture then
+            results := results.addSuite suiteResult
+        let endTime ← IO.monoMsNow
+        let finalResults := { results with totalElapsedMs := endTime - startTime }
+        _root_.Crucible.printFilteredSummary finalResults filter
+        return finalResults.toExitCode
+      )
 
   elabTerm body expectedType?
 
@@ -1036,7 +1142,7 @@ def elabRunAllSuitesFiltered : TermElab := fun stx expectedType? => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: argsStx :: _ =>
-      elabRunAllSuitesFilteredCore ⟨argsStx⟩ none none expectedType?
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ none none false expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -1046,7 +1152,7 @@ def elabRunAllSuitesFilteredTimeout : TermElab := fun stx expectedType? => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: argsStx :: _ :: _ :: _ :: timeoutStx :: _ =>
-      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) none expectedType?
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) none false expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -1056,7 +1162,7 @@ def elabRunAllSuitesFilteredRetry : TermElab := fun stx expectedType? => do
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: argsStx :: _ :: _ :: _ :: retryStx :: _ =>
-      elabRunAllSuitesFilteredCore ⟨argsStx⟩ none (some ⟨retryStx⟩) expectedType?
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ none (some ⟨retryStx⟩) false expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -1066,7 +1172,7 @@ def elabRunAllSuitesFilteredTimeoutRetry : TermElab := fun stx expectedType? => 
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: argsStx :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: _ :: _ :: retryStx :: _ =>
-      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) expectedType?
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) false expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
@@ -1076,7 +1182,78 @@ def elabRunAllSuitesFilteredRetryTimeout : TermElab := fun stx expectedType? => 
   | Syntax.node _ _ args =>
     match args.toList with
     | _ :: argsStx :: _ :: _ :: _ :: retryStx :: _ :: _ :: _ :: _ :: timeoutStx :: _ =>
-      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) expectedType?
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) false expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+/-! ## Filtered Suite Runner (WithResults Variants) -/
+
+/-- Run all suites with filtering and return structured TestResults. -/
+syntax (name := runAllSuitesFilteredWithResultsTerm) "runAllSuitesFilteredWithResults" term : term
+
+/-- Run all suites with filtering, timeout, and return structured TestResults. -/
+syntax (name := runAllSuitesFilteredWithResultsTimeoutTerm)
+  "runAllSuitesFilteredWithResults" term "(" "timeout" ":=" term ")" : term
+
+/-- Run all suites with filtering, retry, and return structured TestResults. -/
+syntax (name := runAllSuitesFilteredWithResultsRetryTerm)
+  "runAllSuitesFilteredWithResults" term "(" "retry" ":=" term ")" : term
+
+/-- Run all suites with filtering, timeout, retry, and return structured TestResults. -/
+syntax (name := runAllSuitesFilteredWithResultsTimeoutRetryTerm)
+  "runAllSuitesFilteredWithResults" term "(" "timeout" ":=" term ")" "(" "retry" ":=" term ")" : term
+
+/-- Run all suites with filtering, retry, timeout, and return structured TestResults. -/
+syntax (name := runAllSuitesFilteredWithResultsRetryTimeoutTerm)
+  "runAllSuitesFilteredWithResults" term "(" "retry" ":=" term ")" "(" "timeout" ":=" term ")" : term
+
+@[term_elab runAllSuitesFilteredWithResultsTerm]
+def elabRunAllSuitesFilteredWithResults : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ none none true expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[term_elab runAllSuitesFilteredWithResultsTimeoutTerm]
+def elabRunAllSuitesFilteredWithResultsTimeout : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ :: _ :: _ :: timeoutStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) none true expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[term_elab runAllSuitesFilteredWithResultsRetryTerm]
+def elabRunAllSuitesFilteredWithResultsRetry : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ :: _ :: _ :: retryStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ none (some ⟨retryStx⟩) true expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[term_elab runAllSuitesFilteredWithResultsTimeoutRetryTerm]
+def elabRunAllSuitesFilteredWithResultsTimeoutRetry : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ :: _ :: _ :: timeoutStx :: _ :: _ :: _ :: _ :: retryStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) true expectedType?
+    | _ => throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[term_elab runAllSuitesFilteredWithResultsRetryTimeoutTerm]
+def elabRunAllSuitesFilteredWithResultsRetryTimeout : TermElab := fun stx expectedType? => do
+  match stx with
+  | Syntax.node _ _ args =>
+    match args.toList with
+    | _ :: argsStx :: _ :: _ :: _ :: retryStx :: _ :: _ :: _ :: _ :: timeoutStx :: _ =>
+      elabRunAllSuitesFilteredCore ⟨argsStx⟩ (some ⟨timeoutStx⟩) (some ⟨retryStx⟩) true expectedType?
     | _ => throwUnsupportedSyntax
   | _ => throwUnsupportedSyntax
 
