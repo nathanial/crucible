@@ -1,7 +1,41 @@
 /-!
 # Test Output Formatting
 
-ANSI color utilities and styled output helpers for test results.
+ANSI color utilities and symbols for test result display.
+
+## Symbols
+
+- `passSymbol` = ✓ (green) - Test passed
+- `failSymbol` = ✗ (red) - Test failed
+- `skipSymbol` = ⊘ (yellow) - Test skipped
+- `xfailSymbol` = ✗ (yellow) - Expected failure (good)
+- `xpassSymbol` = ✗ (red) - Unexpected pass (bad)
+
+## Color Functions
+
+All functions take a string and return it wrapped in ANSI codes:
+
+- `green`, `red`, `yellow`, `cyan` - Foreground colors
+- `bold`, `dim` - Text styles
+- `boldGreen`, `boldRed`, `boldYellow` - Combined styles
+
+## Display Helpers
+
+- `progress current total` → `[1/10]` (dimmed)
+- `timing ms` → `(42ms)` (dimmed)
+
+## Example Output
+
+```
+HTTP Parser Tests
+─────────────────
+[1/3]  parse valid request... ✓ (2ms)
+[2/3]  parse malformed request... ✗ (1ms)
+    Expected status 400, got 200
+[3/3]  not implemented... ⊘ (skipped: todo)
+
+Results: 1 passed, 1 failed, 1 skipped
+```
 -/
 
 namespace Crucible.Output

@@ -3,27 +3,61 @@ import Lean
 /-!
 # Test Suite Registry
 
-Provides auto-discovery of test suites across modules using the `testSuite` command.
+Enables automatic discovery of test suites across modules.
 
-## Usage
+## How Suite Discovery Works
 
-In each test module:
+1. Each test file calls `testSuite "Suite Name"` to register itself
+2. The suite info (name + namespace) is stored in an environment extension
+3. At runtime, `runAllSuites` iterates over all registered suites
+4. For each suite, it looks up `<namespace>.cases` to get the test list
+
+## Required Structure
+
+Each test module must follow this pattern:
+
 ```lean
 import Crucible
 
-namespace MyTests
+namespace MyProject.FeatureTests  -- Namespace is required
 
-testSuite "My Test Suite"
+open Crucible
 
-test "test 1" := do ...
-test "test 2" := do ...
+testSuite "Feature Tests"  -- Registers this namespace as a suite
 
-#generate_tests
+test "test 1" := do
+  1 + 1 ≡ 2
 
-end MyTests
+test "test 2" := do
+  "hello".length ≡ 5
+
+#generate_tests  -- Creates `cases` definition
+
+end MyProject.FeatureTests
 ```
 
-In Main.lean, use `getAllSuites` to get all registered suites.
+## Multiple Suites Per File
+
+You can define multiple suites in one file using separate namespaces:
+
+```lean
+namespace Tests.Unit
+testSuite "Unit Tests"
+test "..." := do ...
+#generate_tests
+end Tests.Unit
+
+namespace Tests.Integration
+testSuite "Integration Tests"
+test "..." := do ...
+#generate_tests
+end Tests.Integration
+```
+
+## Key Functions
+
+- `getAllSuites env` - Get all registered `SuiteInfo` from environment
+- `suiteCasesName suite` - Get the `cases` definition name for a suite
 -/
 
 namespace Crucible.SuiteRegistry

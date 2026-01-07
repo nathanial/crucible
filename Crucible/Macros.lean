@@ -2,25 +2,72 @@ import Lean
 import Crucible.Core
 
 /-!
-# Test Framework Macros
+# Test Definition Macros
 
-Provides the `test` macro for defining tests with minimal boilerplate,
-and `#generate_tests` for auto-collecting tests into a `cases` list.
+This module provides the DSL for defining tests:
 
-## Usage
+## Test Syntax
 
 ```lean
-import Crucible
+-- Basic test
+test "description" := do
+  assertion1
+  assertion2
 
-test "My test description" := do
-  someValue ≡ expectedValue
-  IO.println "Test passed"
+-- With timeout (milliseconds)
+test "slow test" (timeout := 5000) := do
+  ...
 
-test "Another test" := do
-  anotherCheck
+-- With retry count
+test "flaky test" (retry := 3) := do
+  ...
 
-#generate_tests  -- Creates: def cases : List TestCase := [...]
+-- Both timeout and retry
+test "network test" (timeout := 10000) (retry := 2) := do
+  ...
+
+-- Skipped test (won't run)
+test "not ready" (skip := "waiting on feature X") := do
+  ...
+
+-- Expected failure (should fail, passing is error)
+test "known bug" (xfail := "issue #42") := do
+  ...
 ```
+
+## Fixture Hooks
+
+Define hooks in your test namespace before `#generate_tests`:
+
+```lean
+beforeAll := do
+  -- Run once before all tests in suite
+
+afterAll := do
+  -- Run once after all tests (even if tests fail)
+
+beforeEach := do
+  -- Run before each test
+
+afterEach := do
+  -- Run after each test (even if test fails)
+```
+
+## Test Generation
+
+The `#generate_tests` command collects all `test` definitions in the current
+namespace and creates a `cases : List TestCase` definition that the test
+runner uses.
+
+**Important:** Always place `#generate_tests` at the end of your test namespace,
+after all test definitions.
+
+## How It Works
+
+1. Each `test "name" := do body` creates a private `TestCase` definition
+2. Test names are registered in an environment extension
+3. `#generate_tests` reads the extension and emits `def cases := [test1, test2, ...]`
+4. `runAllSuites` discovers suites via `testSuite` and looks up their `cases`
 -/
 
 namespace Crucible.Macros

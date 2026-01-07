@@ -1,7 +1,41 @@
 /-!
 # Test Filtering
 
-Provides types and functions for filtering tests by name patterns.
+Provides the `TestFilter` type for selective test execution.
+
+## Usage
+
+Filters are typically created from CLI arguments via `CLI.parseArgs`:
+
+```bash
+lake test -- --test "parse" --suite "HTTP"
+```
+
+This creates a filter that:
+- Only runs tests with "parse" in the name
+- Only runs suites with "HTTP" in the name
+
+## Filter Matching
+
+By default, patterns are **substring matches** (case-sensitive).
+Use `--exact` for exact string matching.
+
+Multiple patterns of the same type use **OR logic**:
+```bash
+lake test -- -t "parse" -t "validate"  # Tests matching parse OR validate
+```
+
+## Programmatic Usage
+
+```lean
+let filter : TestFilter := {
+  testPatterns := ["parse", "validate"]
+  suitePatterns := ["HTTP"]
+  exactMatch := false
+}
+filter.matchesTest "test_parse_header"  -- true
+filter.matchesSuite "HTTP Parser"       -- true
+```
 -/
 
 namespace Crucible

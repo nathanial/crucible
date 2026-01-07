@@ -5,9 +5,37 @@ import Crucible.CLI
 import Crucible.Output
 
 /-!
-# Core Test Framework Types
+# Core Test Framework Types and Assertions
 
-Defines the fundamental TestCase structure and assertion functions.
+This module provides:
+1. **TestCase** - The fundamental test structure
+2. **Assertions** - Functions to check values (`shouldBe`, `≡`, etc.)
+3. **Test Runners** - `runTests`, `runAllSuites`, `runAllSuitesFiltered`
+4. **Fixtures** - Setup/teardown hooks for test suites
+
+## Key Types
+
+- `TestCase` - A named test with an `IO Unit` action and optional timeout/retry/skip/xfail
+- `TestResults` - Counts of passed/failed/skipped/xfailed/xpassed tests
+- `Fixture` - Hooks: `beforeAll`, `afterAll`, `beforeEach`, `afterEach`
+- `TestOutcome` - Result of a single test (passed/failed/skipped/xfailed/xpassed)
+
+## Assertion Operators
+
+The `≡` operator (type `\equiv`) is the primary assertion:
+```lean
+test "example" := do
+  actual ≡ expected      -- Equality check
+  optionVal ≡? expected  -- Option unwrap + equality
+```
+
+## Test Runner Functions
+
+- `runAllSuites` - Run all registered test suites
+- `runAllSuitesFiltered args` - Run with CLI filtering support
+- `runTests "Suite Name" cases` - Run a specific list of test cases
+
+These are typically used as compile-time macros that discover test suites automatically.
 -/
 
 namespace Crucible

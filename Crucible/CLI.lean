@@ -1,9 +1,56 @@
 import Crucible.Filter
 
 /-!
-# CLI Argument Parsing for Test Filtering
+# CLI Argument Parsing
 
-Provides lightweight argument parsing for test filtering without external dependencies.
+Parses command-line arguments into a `TestFilter` for selective test execution.
+
+## Supported Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--test PATTERN` | `-t` | Run tests matching PATTERN |
+| `--suite PATTERN` | `-s` | Run suites matching PATTERN |
+| `--exact` | `-e` | Use exact match (not substring) |
+| `--help` | `-h` | Show help message |
+
+## Usage Examples
+
+```bash
+# Run tests containing "parse"
+lake test -- --test parse
+
+# Run tests in suites containing "HTTP"
+lake test -- --suite HTTP
+
+# Multiple patterns (OR logic)
+lake test -- -t parse -t validate
+
+# Exact match
+lake test -- --exact -t "parse header"
+
+# Combined
+lake test -- --suite "HTTP Parser" --test request
+
+# Show help
+lake test -- --help
+```
+
+## Main Functions
+
+- `parseArgs args` - Parse args into `TestFilter`, prints help on error
+- `parseArgsCore args` - Pure parsing, returns `ParseResult`
+- `helpRequested args` - Check if `--help` or `-h` present
+
+## Integration
+
+In your test Main.lean:
+
+```lean
+def main (args : List String) : IO UInt32 := runAllSuitesFiltered args
+```
+
+The `runAllSuitesFiltered` macro handles argument parsing internally.
 -/
 
 namespace Crucible.CLI
