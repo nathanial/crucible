@@ -84,14 +84,96 @@ def TestCase.withSkip (tc : TestCase) (reason : String := "skipped") : TestCase 
 def TestCase.withXfail (tc : TestCase) (reason : String := "expected failure") : TestCase :=
   { tc with xfail := true, xfailReason := some reason }
 
-/-- Results from running a test suite. -/
-structure TestResults where
+/-- Results from running a single test suite. -/
+structure SuiteResult where
+  /-- Human-readable name of the suite. -/
+  name : String
+  /-- Number of tests that passed. -/
   passed : Nat := 0
+  /-- Number of tests that failed. -/
   failed : Nat := 0
+  /-- Number of tests that were skipped. -/
   skipped : Nat := 0
-  xfailed : Nat := 0  -- expected failures that failed (good)
-  xpassed : Nat := 0  -- expected failures that passed (bad)
-  deriving Repr
+  /-- Number of expected failures that failed (good). -/
+  xfailed : Nat := 0
+  /-- Number of expected failures that passed (bad). -/
+  xpassed : Nat := 0
+  /-- Time taken to run this suite in milliseconds. -/
+  elapsedMs : Nat := 0
+  deriving Repr, Inhabited
+
+namespace SuiteResult
+
+/-- Total number of tests run (excludes skipped). -/
+def total (r : SuiteResult) : Nat := r.passed + r.failed + r.xfailed + r.xpassed
+
+/-- Total number of tests including skipped. -/
+def totalWithSkipped (r : SuiteResult) : Nat := r.total + r.skipped
+
+/-- Check if all tests in this suite passed. -/
+def allPassed (r : SuiteResult) : Bool := r.failed == 0 && r.xpassed == 0
+
+end SuiteResult
+
+/--
+Aggregated results from running all test suites.
+
+Provides per-suite breakdown via `suites` array and computed aggregate properties.
+
+**Example:**
+```lean
+let results ← runAllSuites
+IO.println s!"Total passed: {results.passed}"
+IO.println s!"Suites run: {results.suiteCount}"
+for suite in results.suites do
+  IO.println s!"  {suite.name}: {suite.passed}/{suite.total} passed"
+return results.toExitCode
+```
+-/
+structure TestResults where
+  /-- Per-suite results in execution order. -/
+  suites : Array SuiteResult := #[]
+  /-- Total time for all suites in milliseconds. -/
+  totalElapsedMs : Nat := 0
+  deriving Repr, Inhabited
+
+namespace TestResults
+
+/-- Number of suites that were run. -/
+def suiteCount (r : TestResults) : Nat := r.suites.size
+
+/-- Total passed tests across all suites. -/
+def passed (r : TestResults) : Nat := r.suites.foldl (fun acc s => acc + s.passed) 0
+
+/-- Total failed tests across all suites. -/
+def failed (r : TestResults) : Nat := r.suites.foldl (fun acc s => acc + s.failed) 0
+
+/-- Total skipped tests across all suites. -/
+def skipped (r : TestResults) : Nat := r.suites.foldl (fun acc s => acc + s.skipped) 0
+
+/-- Total expected failures (xfailed) across all suites. -/
+def xfailed (r : TestResults) : Nat := r.suites.foldl (fun acc s => acc + s.xfailed) 0
+
+/-- Total unexpected passes (xpassed) across all suites. -/
+def xpassed (r : TestResults) : Nat := r.suites.foldl (fun acc s => acc + s.xpassed) 0
+
+/-- Total number of tests run (excludes skipped). -/
+def total (r : TestResults) : Nat := r.passed + r.failed + r.xfailed + r.xpassed
+
+/-- Total number of tests including skipped. -/
+def totalWithSkipped (r : TestResults) : Nat := r.total + r.skipped
+
+/-- Check if all tests passed (xfailed counts as pass, xpassed counts as fail). -/
+def allPassed (r : TestResults) : Bool := r.failed == 0 && r.xpassed == 0
+
+/-- Convert to process exit code: 0 if all passed, 1 otherwise. -/
+def toExitCode (r : TestResults) : UInt32 := if r.allPassed then 0 else 1
+
+/-- Add a suite result to the aggregate. -/
+def addSuite (r : TestResults) (s : SuiteResult) : TestResults :=
+  { r with suites := r.suites.push s }
+
+end TestResults
 
 /--
 Test fixture with setup/teardown hooks.
@@ -109,23 +191,6 @@ structure Fixture where
 
 /-- Empty fixture with no hooks. -/
 def Fixture.empty : Fixture := {}
-
-/-- Total number of tests run (excludes skipped). -/
-def TestResults.total (r : TestResults) : Nat := r.passed + r.failed + r.xfailed + r.xpassed
-
-/-- Total number of tests including skipped. -/
-def TestResults.totalWithSkipped (r : TestResults) : Nat := r.total + r.skipped
-
-/-- Check if all tests passed (xfailed counts as pass, xpassed counts as fail). -/
-def TestResults.allPassed (r : TestResults) : Bool := r.failed == 0 && r.xpassed == 0
-
-/-- Merge two test results by summing their counts. -/
-def TestResults.merge (a b : TestResults) : TestResults :=
-  { passed := a.passed + b.passed
-    failed := a.failed + b.failed
-    skipped := a.skipped + b.skipped
-    xfailed := a.xfailed + b.xfailed
-    xpassed := a.xpassed + b.xpassed }
 
 /-- Assert that a condition is true. -/
 def ensure (cond : Bool) (msg : String) : IO Unit := do
@@ -538,11 +603,12 @@ def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
     IO.println s!"{Output.failSymbol} {Output.timing elapsed}\n    {e}"
     return .failed
 
-/-- Run a list of test cases and report results. -/
+/-- Run a list of test cases and report results for a single suite. -/
 def runTests (name : String) (cases : List TestCase)
     (defaultTimeoutMs : Option Nat := none)
     (defaultRetryCount : Option Nat := none)
-    (fixture : Fixture := {}) : IO TestResults := do
+    (fixture : Fixture := {}) : IO SuiteResult := do
+  let suiteStartTime ← IO.monoMsNow
   IO.println s!"\n{Output.bold name}"
   IO.println ("─".intercalate (List.replicate name.length ""))
 
@@ -553,7 +619,8 @@ def runTests (name : String) (cases : List TestCase)
     catch e =>
       IO.println s!"  {Output.failSymbol} [beforeAll failed: {e}]"
       -- If beforeAll fails, skip all tests
-      return { passed := 0, failed := cases.length }
+      let elapsed := (← IO.monoMsNow) - suiteStartTime
+      return { name, passed := 0, failed := cases.length, elapsedMs := elapsed }
 
   let totalTests := cases.length
   let mut passed := 0
@@ -590,16 +657,18 @@ def runTests (name : String) (cases : List TestCase)
   if xpassed > 0 then parts := parts ++ [Output.red s!"{xpassed} xpassed"]
   if parts.isEmpty then parts := [Output.dim "0 tests"]
   IO.println s!"\nResults: {", ".intercalate parts}"
-  return { passed, failed, skipped, xfailed, xpassed }
+
+  let elapsed := (← IO.monoMsNow) - suiteStartTime
+  return { name, passed, failed, skipped, xfailed, xpassed, elapsedMs := elapsed }
 
 /-- Run a list of test cases with filtering applied. -/
 def runTestsFiltered (name : String) (cases : List TestCase) (filter : TestFilter)
     (defaultTimeoutMs : Option Nat := none)
     (defaultRetryCount : Option Nat := none)
-    (fixture : Fixture := {}) : IO TestResults := do
+    (fixture : Fixture := {}) : IO (Option SuiteResult) := do
   -- Skip suite entirely if filter doesn't match suite name
   if !filter.matchesSuite name then
-    return { passed := 0, failed := 0 }
+    return none
 
   -- Filter test cases by name
   let filteredCases := if filter.testPatterns.isEmpty then cases
@@ -607,10 +676,10 @@ def runTestsFiltered (name : String) (cases : List TestCase) (filter : TestFilte
 
   -- Skip if no tests match
   if filteredCases.isEmpty then
-    return { passed := 0, failed := 0 }
+    return none
 
   -- Delegate to existing runTests
-  runTests name filteredCases defaultTimeoutMs defaultRetryCount fixture
+  some <$> runTests name filteredCases defaultTimeoutMs defaultRetryCount fixture
 
 /-- Format a Float with a fixed number of decimal places. -/
 private def formatFloat (f : Float) (decimals : Nat) : String :=
@@ -628,11 +697,11 @@ private def formatFloat (f : Float) (decimals : Nat) : String :=
   | _ => s
 
 /-- Print a summary of test results across all suites. -/
-def printSummary (results : TestResults) (suiteCount : Nat) (elapsedMs : Nat) : IO Unit := do
+def printSummary (results : TestResults) : IO Unit := do
   let total := results.total
   let effectivePassed := results.passed + results.xfailed  -- xfailed counts as "good"
   let pct := if total > 0 then (effectivePassed.toFloat / total.toFloat) * 100.0 else 100.0
-  let secs := elapsedMs.toFloat / 1000.0
+  let secs := results.totalElapsedMs.toFloat / 1000.0
   IO.println ""
   IO.println (Output.dim "────────────────────────────────────────")
   -- Build summary line with all non-zero counts (colored)
@@ -650,16 +719,15 @@ def printSummary (results : TestResults) (suiteCount : Nat) (elapsedMs : Nat) : 
                     else if pct >= 50.0 then Output.yellow s!"{pctStr}%"
                     else Output.red s!"{pctStr}%"
   IO.println s!"Summary: {", ".intercalate parts} ({pctColored})"
-  IO.println s!"         {suiteCount} suites, {total} tests run"
+  IO.println s!"         {results.suiteCount} suites, {total} tests run"
   if results.skipped > 0 then
     IO.println s!"         {Output.yellow s!"{results.skipped} tests skipped"}"
   IO.println s!"         Completed in {formatFloat secs 2}s"
   IO.println (Output.dim "────────────────────────────────────────")
 
 /-- Print a summary of test results with filter information. -/
-def printFilteredSummary (results : TestResults) (suiteCount : Nat) (elapsedMs : Nat)
-    (filter : TestFilter) : IO Unit := do
-  printSummary results suiteCount elapsedMs
+def printFilteredSummary (results : TestResults) (filter : TestFilter) : IO Unit := do
+  printSummary results
   -- Print filter info if any filters were applied
   if !filter.matchesAll then
     IO.println ""
@@ -760,11 +828,12 @@ private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
     let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
     let mut results : _root_.Crucible.TestResults := {}
     for (name, cases, fixture) in suites do
-      let r ← _root_.Crucible.runTests name cases $timeoutTerm $retryTerm fixture
-      results := _root_.Crucible.TestResults.merge results r
+      let suiteResult ← _root_.Crucible.runTests name cases $timeoutTerm $retryTerm fixture
+      results := results.addSuite suiteResult
     let endTime ← IO.monoMsNow
-    _root_.Crucible.printSummary results suites.size (endTime - startTime)
-    return if results.allPassed then 0 else 1
+    let finalResults := { results with totalElapsedMs := endTime - startTime }
+    _root_.Crucible.printSummary finalResults
+    return finalResults
   )
 
   elabTerm body expectedType?
@@ -945,20 +1014,18 @@ private def elabRunAllSuitesFilteredCore (argsStx : TSyntax `term)
     -- Check for help first
     if _root_.Crucible.CLI.helpRequested args then
       _root_.Crucible.CLI.printHelp
-      return 0
+      return {}  -- Return empty results on help
     let filter ← _root_.Crucible.CLI.parseArgs args
     let startTime ← IO.monoMsNow
     let suites : Array (String × List _root_.Crucible.TestCase × _root_.Crucible.Fixture) := #[$[$suiteEntries],*]
     let mut results : _root_.Crucible.TestResults := {}
-    let mut ranSuites := 0
     for (name, cases, fixture) in suites do
-      let r ← _root_.Crucible.runTestsFiltered name cases filter $timeoutTerm $retryTerm fixture
-      if r.total > 0 then
-        ranSuites := ranSuites + 1
-      results := _root_.Crucible.TestResults.merge results r
+      if let some suiteResult ← _root_.Crucible.runTestsFiltered name cases filter $timeoutTerm $retryTerm fixture then
+        results := results.addSuite suiteResult
     let endTime ← IO.monoMsNow
-    _root_.Crucible.printFilteredSummary results ranSuites (endTime - startTime) filter
-    return if results.allPassed then 0 else 1
+    let finalResults := { results with totalElapsedMs := endTime - startTime }
+    _root_.Crucible.printFilteredSummary finalResults filter
+    return finalResults
   )
 
   elabTerm body expectedType?

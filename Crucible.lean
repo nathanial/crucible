@@ -58,7 +58,19 @@ import MyProject.Tests
 
 open Crucible
 
-def main (args : List String) : IO UInt32 := runAllSuitesFiltered args
+def main (args : List String) : IO UInt32 := do
+  let results ← runAllSuitesFiltered args
+  return results.toExitCode
+```
+
+The `TestResults` type provides per-suite breakdown:
+```lean
+-- Access aggregated counts
+IO.println s!"Passed: {results.passed}, Failed: {results.failed}"
+
+-- Iterate over individual suites
+for suite in results.suites do
+  IO.println s!"{suite.name}: {suite.passed}/{suite.total} ({suite.elapsedMs}ms)"
 ```
 
 ## Assertion Reference
