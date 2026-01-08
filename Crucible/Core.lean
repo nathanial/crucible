@@ -10,8 +10,9 @@ import Crucible.Output
 This module provides:
 1. **TestCase** - The fundamental test structure
 2. **Assertions** - Functions to check values (`shouldBe`, `≡`, etc.)
-3. **Test Runners** - `runTests`, `runAllSuites`, `runAllSuitesFiltered`
-4. **Fixtures** - Setup/teardown hooks for test suites
+3. **Soft Assertions** - Record failures without stopping execution
+4. **Test Runners** - `runTests`, `runAllSuites`, `runAllSuitesFiltered`
+5. **Fixtures** - Setup/teardown hooks for test suites
 
 ## Key Types
 
@@ -19,6 +20,7 @@ This module provides:
 - `TestResults` - Counts of passed/failed/skipped/xfailed/xpassed tests
 - `Fixture` - Hooks: `beforeAll`, `afterAll`, `beforeEach`, `afterEach`
 - `TestOutcome` - Result of a single test (passed/failed/skipped/xfailed/xpassed)
+- `SoftAssertContext` - Context for collecting soft assertion failures
 
 ## Assertion Operators
 
@@ -27,6 +29,17 @@ The `≡` operator (type `\equiv`) is the primary assertion:
 test "example" := do
   actual ≡ expected      -- Equality check
   optionVal ≡? expected  -- Option unwrap + equality
+```
+
+## Soft Assertions
+
+Use `withSoftAsserts` to collect multiple failures without stopping:
+```lean
+test "multiple checks" := withSoftAsserts fun soft => do
+  soft.shouldBe user.age 25
+  soft.shouldBe user.name "Alice"
+  soft.ensure (user.active) "user should be active"
+  -- All failures reported at end
 ```
 
 ## Test Runner Functions
@@ -456,6 +469,160 @@ def withMessage (msg : String) (assertion : IO Unit) : IO Unit := do
     assertion
   catch _ =>
     throw <| IO.userError msg
+
+-- ============================================================================
+-- Soft Assertions
+-- ============================================================================
+
+/--
+Context for tracking soft assertion failures.
+
+Soft assertions record failures but don't stop test execution,
+allowing multiple checks per test and seeing all failures at once.
+-/
+structure SoftAssertContext where
+  /-- Accumulated failure messages. -/
+  failures : IO.Ref (Array String)
+
+namespace SoftAssertContext
+
+/-- Create a new soft assertion context. -/
+def new : IO SoftAssertContext := do
+  let failures ← IO.mkRef #[]
+  return { failures }
+
+/-- Record a failure message. -/
+def addFailure (ctx : SoftAssertContext) (msg : String) : IO Unit :=
+  ctx.failures.modify (·.push msg)
+
+/-- Get all recorded failures. -/
+def getFailures (ctx : SoftAssertContext) : IO (Array String) :=
+  ctx.failures.get
+
+/-- Check if any failures were recorded. -/
+def hasFailures (ctx : SoftAssertContext) : IO Bool := do
+  let failures ← ctx.failures.get
+  return !failures.isEmpty
+
+/-- Get the number of recorded failures. -/
+def failureCount (ctx : SoftAssertContext) : IO Nat := do
+  let failures ← ctx.failures.get
+  return failures.size
+
+end SoftAssertContext
+
+/--
+Run a test block with soft assertions enabled.
+
+All soft assertions within the block will be collected, and if any fail,
+the test will fail at the end with a summary of all failures.
+
+**Example:**
+```lean
+test "multiple validations" := withSoftAsserts fun soft => do
+  soft.ensure (user.age >= 0) "age should be non-negative"
+  soft.ensure (user.name.length > 0) "name should not be empty"
+  soft.shouldBe user.status "active"
+  -- Test continues even if some assertions fail
+  -- All failures are reported at the end
+```
+-/
+def withSoftAsserts (block : SoftAssertContext → IO Unit) : IO Unit := do
+  let ctx ← SoftAssertContext.new
+  block ctx
+  let failures ← ctx.getFailures
+  if !failures.isEmpty then
+    let failureList := failures.toList.mapIdx fun i msg => s!"  {i + 1}. {msg}"
+    let summary := s!"Soft assertion failures ({failures.size} total):\n{"\n".intercalate failureList}"
+    throw <| IO.userError summary
+
+/-- Soft version of `ensure`: records failure but doesn't throw. -/
+def SoftAssertContext.ensure (ctx : SoftAssertContext) (cond : Bool) (msg : String) : IO Unit := do
+  if !cond then
+    ctx.addFailure s!"Assertion failed: {msg}"
+
+/-- Soft version of `shouldBe`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldBe [BEq α] [Repr α] (ctx : SoftAssertContext) (actual : α) (expected : α) : IO Unit := do
+  if actual != expected then
+    ctx.addFailure s!"Expected {repr expected}, got {repr actual}"
+
+/-- Soft version of `shouldBeNear`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldBeNear (ctx : SoftAssertContext) (actual expected : Float) (eps : Float := 0.0001) : IO Unit := do
+  if !floatNear actual expected eps then
+    ctx.addFailure s!"Expected {expected} (±{eps}), got {actual}"
+
+/-- Soft version of `shouldBeSome`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldBeSome [BEq α] [Repr α] (ctx : SoftAssertContext) (actual : Option α) (expected : α) : IO Unit := do
+  match actual with
+  | some v =>
+    if v != expected then
+      ctx.addFailure s!"Expected some {repr expected}, got some {repr v}"
+  | none =>
+    ctx.addFailure s!"Expected some {repr expected}, got none"
+
+/-- Soft version of `shouldBeNone`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldBeNone [Repr α] (ctx : SoftAssertContext) (actual : Option α) : IO Unit := do
+  match actual with
+  | some v => ctx.addFailure s!"Expected none, got some {repr v}"
+  | none => pure ()
+
+/-- Soft version of `shouldSatisfy`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldSatisfy (ctx : SoftAssertContext) (cond : Bool) (msg : String := "condition") : IO Unit := do
+  if !cond then
+    ctx.addFailure s!"Expected {msg} to be true"
+
+/-- Soft version of `shouldMatch`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldMatch [Repr α] (ctx : SoftAssertContext) (actual : α) (pred : α → Bool) (desc : String := "predicate") : IO Unit := do
+  if !pred actual then
+    ctx.addFailure s!"Expected {repr actual} to satisfy {desc}"
+
+/-- Soft version of `shouldHaveLength`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldHaveLength [Repr α] (ctx : SoftAssertContext) (actual : List α) (expected : Nat) : IO Unit := do
+  if actual.length != expected then
+    ctx.addFailure s!"Expected list of length {expected}, got length {actual.length}"
+
+/-- Soft version of `shouldContain`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldContain [BEq α] [Repr α] (ctx : SoftAssertContext) (actual : List α) (expected : α) : IO Unit := do
+  if !actual.contains expected then
+    ctx.addFailure s!"Expected list to contain {repr expected}, but it doesn't"
+
+/-- Soft version of `shouldContainAll`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldContainAll [BEq α] [Repr α] (ctx : SoftAssertContext) (actual : List α) (expected : List α) : IO Unit := do
+  for item in expected do
+    if !actual.contains item then
+      ctx.addFailure s!"Expected list to contain {repr item}, but it doesn't.\n  List: {repr actual}"
+
+/-- Soft version of `shouldStartWith`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldStartWith (ctx : SoftAssertContext) (actual : String) (expectedPrefix : String) : IO Unit := do
+  if !actual.startsWith expectedPrefix then
+    ctx.addFailure s!"Expected \"{actual}\" to start with \"{expectedPrefix}\""
+
+/-- Soft version of `shouldEndWith`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldEndWith (ctx : SoftAssertContext) (actual : String) (suffix : String) : IO Unit := do
+  if !actual.endsWith suffix then
+    ctx.addFailure s!"Expected \"{actual}\" to end with \"{suffix}\""
+
+/-- Soft version of `shouldContainSubstr`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldContainSubstr (ctx : SoftAssertContext) (actual : String) (substring : String) : IO Unit := do
+  if !containsSubstr actual substring then
+    ctx.addFailure s!"Expected \"{actual}\" to contain \"{substring}\""
+
+/-- Soft version of `shouldBeBetween`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldBeBetween [Ord α] [Repr α] (ctx : SoftAssertContext) (actual : α) (min max : α) : IO Unit := do
+  match compare actual min, compare actual max with
+  | .lt, _ => ctx.addFailure s!"Expected {repr actual} to be >= {repr min}"
+  | _, .gt => ctx.addFailure s!"Expected {repr actual} to be <= {repr max}"
+  | _, _ => pure ()
+
+/-- Soft version of `shouldBeEmpty`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldBeEmpty [Repr α] (ctx : SoftAssertContext) (actual : List α) : IO Unit := do
+  if !actual.isEmpty then
+    ctx.addFailure s!"Expected empty list, got {repr actual}"
+
+/-- Soft version of `shouldNotBeEmpty`: records failure but doesn't throw. -/
+def SoftAssertContext.shouldNotBeEmpty [Repr α] (ctx : SoftAssertContext) (actual : List α) : IO Unit := do
+  if actual.isEmpty then
+    ctx.addFailure "Expected non-empty list, got []"
 
 /--
 Infix notation for equality assertion.
