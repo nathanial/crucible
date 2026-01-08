@@ -208,7 +208,7 @@ def Fixture.empty : Fixture := {}
 /-- Assert that a condition is true. -/
 def ensure (cond : Bool) (msg : String) : IO Unit := do
   if !cond then
-    throw <| IO.userError s!"Assertion failed: {msg}"
+    throw <| IO.userError s!"Expected: {msg}"
 
 /--
 Assert that two values are equal.
@@ -229,7 +229,7 @@ actual ≡ expected
 @[deprecated "Use `shouldBe` or `≡` instead" (since := "2025-01-01")]
 def ensureEq [BEq α] [Repr α] (msg : String) (expected : α) (actual : α) : IO Unit := do
   if expected != actual then
-    throw <| IO.userError s!"Assertion failed: {msg}\n  expected: {repr expected}\n  actual:   {repr actual}"
+    throw <| IO.userError s!"Expected: {msg}\n  expected: {repr expected}\n  actual:   {repr actual}"
 
 -- ============================================================================
 -- Modern assertion helpers with cleaner syntax
@@ -286,7 +286,7 @@ def shouldHaveLength [Repr α] (actual : List α) (expected : Nat) : IO Unit := 
 /-- Assert that a list contains the expected element. -/
 def shouldContain [BEq α] [Repr α] (actual : List α) (expected : α) : IO Unit := do
   if !actual.contains expected then
-    throw <| IO.userError s!"Expected list to contain {repr expected}, but it doesn't"
+    throw <| IO.userError s!"Expected list to contain {repr expected}"
 
 -- ============================================================================
 -- Exception assertions
@@ -368,7 +368,7 @@ def shouldNotThrow (action : IO α) : IO Unit := do
 def shouldContainAll [BEq α] [Repr α] (actual : List α) (expected : List α) : IO Unit := do
   for item in expected do
     if !actual.contains item then
-      throw <| IO.userError s!"Expected list to contain {repr item}, but it doesn't.\n  List: {repr actual}"
+      throw <| IO.userError s!"Expected list to contain {repr item}, got {repr actual}"
 
 /-- Assert that a string starts with the expected prefix. -/
 def shouldStartWith (actual : String) (expectedPrefix : String) : IO Unit := do
@@ -417,7 +417,7 @@ test "API call succeeds" := do
 def shouldBeOk [ToString ε] (result : Except ε α) (context : String := "Operation") : IO α := do
   match result with
   | .ok a => return a
-  | .error e => throw <| IO.userError s!"{context} failed: {e}"
+  | .error e => throw <| IO.userError s!"Expected {context} to succeed, got error: {e}"
 
 /--
 Assert that an Except value is an error.
@@ -539,7 +539,7 @@ def withSoftAsserts (block : SoftAssertContext → IO Unit) : IO Unit := do
 /-- Soft version of `ensure`: records failure but doesn't throw. -/
 def SoftAssertContext.ensure (ctx : SoftAssertContext) (cond : Bool) (msg : String) : IO Unit := do
   if !cond then
-    ctx.addFailure s!"Assertion failed: {msg}"
+    ctx.addFailure s!"Expected: {msg}"
 
 /-- Soft version of `shouldBe`: records failure but doesn't throw. -/
 def SoftAssertContext.shouldBe [BEq α] [Repr α] (ctx : SoftAssertContext) (actual : α) (expected : α) : IO Unit := do
@@ -584,13 +584,13 @@ def SoftAssertContext.shouldHaveLength [Repr α] (ctx : SoftAssertContext) (actu
 /-- Soft version of `shouldContain`: records failure but doesn't throw. -/
 def SoftAssertContext.shouldContain [BEq α] [Repr α] (ctx : SoftAssertContext) (actual : List α) (expected : α) : IO Unit := do
   if !actual.contains expected then
-    ctx.addFailure s!"Expected list to contain {repr expected}, but it doesn't"
+    ctx.addFailure s!"Expected list to contain {repr expected}"
 
 /-- Soft version of `shouldContainAll`: records failure but doesn't throw. -/
 def SoftAssertContext.shouldContainAll [BEq α] [Repr α] (ctx : SoftAssertContext) (actual : List α) (expected : List α) : IO Unit := do
   for item in expected do
     if !actual.contains item then
-      ctx.addFailure s!"Expected list to contain {repr item}, but it doesn't.\n  List: {repr actual}"
+      ctx.addFailure s!"Expected list to contain {repr item}, got {repr actual}"
 
 /-- Soft version of `shouldStartWith`: records failure but doesn't throw. -/
 def SoftAssertContext.shouldStartWith (ctx : SoftAssertContext) (actual : String) (expectedPrefix : String) : IO Unit := do
