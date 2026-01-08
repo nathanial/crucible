@@ -4,6 +4,7 @@ import Crucible.Macros
 import Crucible.Filter
 import Crucible.CLI
 import Crucible.Output
+import Crucible.Property
 
 /-!
 # Crucible Test Framework
@@ -19,7 +20,13 @@ Crucible.lean        -- This file: main entry point, re-exports all modules
 ├── SuiteRegistry    -- `testSuite` command for auto-discovery
 ├── Filter.lean      -- TestFilter type for selective test runs
 ├── CLI.lean         -- Command-line argument parsing
-└── Output.lean      -- ANSI colors and formatting
+├── Output.lean      -- ANSI colors and formatting
+└── Property/        -- Property-based testing
+    ├── Random.lean      -- RandState, Gen monad
+    ├── Shrink.lean      -- Shrinkable typeclass
+    ├── Generators.lean  -- Arbitrary typeclass, combinators
+    ├── Core.lean        -- Property, forAll, check logic
+    └── Syntax.lean      -- `proptest` command
 ```
 
 ## Quick Start Template

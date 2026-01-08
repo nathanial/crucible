@@ -1,5 +1,6 @@
 import Crucible
 import Tests.Fixtures
+import Tests.PropertyTests
 
 open Crucible
 
