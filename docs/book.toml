@@ -1,0 +1,14 @@
+[book]
+title = "Crucible"
+description = "A lightweight test framework for Lean 4"
+authors = ["Nathanial Hartman"]
+language = "en"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/nathanial/crucible"
+edit-url-template = "https://github.com/nathanial/crucible/edit/master/docs/{path}"
