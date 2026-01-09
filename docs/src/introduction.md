@@ -1,6 +1,60 @@
 # Introduction
 
-Crucible is a lightweight test framework for Lean 4. It provides simple, declarative test definitions with built-in assertions and a clean runner that produces readable output.
+## The Problem
+
+Testing in Lean 4 without a framework means writing boilerplate:
+
+```lean
+def test_addition : IO Unit := do
+  let result := 1 + 1
+  if result != 2 then
+    throw (IO.userError s!"Expected 2, got {result}")
+
+def test_list_length : IO Unit := do
+  let xs := [1, 2, 3]
+  if xs.length != 3 then
+    throw (IO.userError s!"Expected length 3, got {xs.length}")
+
+def main : IO Unit := do
+  test_addition
+  test_list_length
+  IO.println "All tests passed"
+```
+
+No test discovery. No clear output. No rich assertions. Just manual error checking.
+
+## The Solution
+
+Crucible provides declarative test definitions with built-in assertions:
+
+```lean
+import Crucible
+
+namespace MyTests
+open Crucible
+
+testSuite "Basics"
+
+test "addition works" := do
+  (1 + 1) ≡ 2
+
+test "list length" := do
+  shouldHaveLength [1, 2, 3] 3
+
+#generate_tests
+end MyTests
+```
+
+Run with `lake test` and get clean, informative output:
+
+```
+Basics
+──────
+[1/2]  addition works... ✓ (1ms)
+[2/2]  list length... ✓ (0ms)
+
+Summary: 2 passed, 0 failed (100.0%)
+```
 
 ## Features
 

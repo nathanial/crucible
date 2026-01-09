@@ -7,13 +7,13 @@ Add Crucible to your Lean 4 project by adding it as a dependency in your `lakefi
 Add the following to your `lakefile.lean`:
 
 ```lean
-require crucible from git "https://github.com/nathanial/crucible" @ "master"
+require crucible from git "https://github.com/nathanial/crucible" @ "v0.1.0"
 ```
 
-Or pin to a specific version:
+Or track the latest changes (not recommended for production):
 
 ```lean
-require crucible from git "https://github.com/nathanial/crucible" @ "v0.1.0"
+require crucible from git "https://github.com/nathanial/crucible" @ "master"
 ```
 
 ## Updating Dependencies

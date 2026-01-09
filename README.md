@@ -1,15 +1,28 @@
 # Crucible
 
-A lightweight test framework for Lean 4.
+Ever written Lean 4 tests like this?
 
-Crucible provides simple, declarative test definitions with built-in assertions and a clean runner that produces readable output.
+```lean
+def test_addition : IO Unit := do
+  if 1 + 1 != 2 then
+    throw (IO.userError "addition failed")
+```
+
+With Crucible, write this instead:
+
+```lean
+test "addition works" := do
+  (1 + 1) ≡ 2
+```
+
+A lightweight test framework for Lean 4 with declarative syntax, 30+ built-in assertions, property testing, and zero dependencies.
 
 ## Installation
 
 Add to your `lakefile.lean`:
 
 ```lean
-require crucible from git "https://github.com/nathanial/crucible" @ "master"
+require crucible from git "https://github.com/nathanial/crucible" @ "v0.1.0"
 ```
 
 Then run:
@@ -113,6 +126,15 @@ def main : IO UInt32 := do
 ```bash
 lake build
 ```
+
+## Documentation
+
+- [Quick Start](./docs/src/quick-start.md) — Write your first tests
+- [Assertions Reference](./docs/src/assertions.md) — 30+ built-in assertions
+- [Fixtures](./docs/src/fixtures.md) — Setup and teardown hooks
+- [Property Testing](./docs/src/property-testing.md) — QuickCheck-style testing
+- [CLI Reference](./docs/src/cli.md) — Filter and run tests
+- [API Reference](./docs/src/api-reference.md) — Complete API docs
 
 ## License
 

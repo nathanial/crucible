@@ -14,3 +14,4 @@
   - [Property Testing](./property-testing.md)
 - [CLI Reference](./cli.md)
 - [API Reference](./api-reference.md)
+- [Common Mistakes](./common-mistakes.md)
