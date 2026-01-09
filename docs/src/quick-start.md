@@ -1,6 +1,6 @@
 # Quick Start
 
-This guide walks you through writing your first test suite with Crucible.
+This guide walks you through writing your first test suite with Crucible. By the end, you'll have a working test file, a test runner, and an understanding of how Crucible organizes and executes tests.
 
 ## Your First Test
 
@@ -25,19 +25,19 @@ test "strings can be compared" := do
 end MyTests
 ```
 
-Let's break this down:
+Every Crucible test file follows the same structure. You start by importing Crucible to bring the test framework into scope. The `namespace` declaration groups your tests together and gives them a unique identity—this becomes important when you have many test files, since each namespace can contain its own suite without conflicting with others.
 
-1. `import Crucible` - Import the test framework
-2. `namespace MyTests` - Create a namespace for your tests
-3. `open Crucible` - Bring Crucible definitions into scope
-4. `testSuite "My First Suite"` - Declare a named test suite
-5. `test "name" := do` - Define a test with a name
-6. `≡` - The equality assertion operator (type `\equiv`)
-7. `#generate_tests` - Collect all tests defined above
+The `open Crucible` statement brings the framework's definitions into scope so you can use `test`, `testSuite`, and the assertion operators without qualification. Without this line, you'd need to write `Crucible.test` and `Crucible.testSuite` everywhere.
+
+The `testSuite "My First Suite"` declaration names the suite. This name appears in the test output and helps you identify which group of tests is running. Think of it as a chapter heading for this set of related tests.
+
+Each test is defined with `test "description" := do` followed by the test body. The description is what you'll see in the output, so make it clear and specific. Inside the test body, you write assertions. The `≡` operator (typed with `\equiv`) checks that two values are equal and throws a descriptive error if they're not.
+
+Finally, `#generate_tests` scans the namespace and collects all the tests you've defined. This command must come after your test definitions and before the `end` that closes the namespace. Without it, Crucible won't know your tests exist.
 
 ## The Test Runner
 
-Create `Tests/Main.lean` to run your tests:
+Tests don't run themselves—you need an entry point that knows about all your test files. Create `Tests/Main.lean` to serve as this central runner:
 
 ```lean
 import Crucible
@@ -49,7 +49,13 @@ def main : IO UInt32 := do
   runAllSuites
 ```
 
+The key insight here is that importing a test file causes its `#generate_tests` command to register the suite with Crucible's global registry. When you call `runAllSuites`, it iterates through every registered suite and executes their tests. This means adding a new test file is just a matter of importing it here—no other configuration needed.
+
+The function returns `IO UInt32` because it's designed to work with shell conventions: it returns `0` when all tests pass and `1` when any test fails. This makes it easy to use Crucible in CI pipelines or scripts that check the exit code.
+
 ## Running Tests
+
+With everything in place, run your tests using Lake's test command:
 
 ```bash
 lake test
@@ -74,7 +80,7 @@ Summary: 2 passed, 0 failed (100.0%)
 
 ## Multiple Test Suites
 
-You can define multiple suites in different namespaces:
+As your project grows, you'll want to organize tests by area of functionality. Each suite lives in its own namespace, which keeps tests isolated and makes the output easier to navigate. Here's an example with two suites in the same file:
 
 ```lean
 import Crucible
@@ -104,9 +110,11 @@ test "append" := do ("a" ++ "b") ≡ "ab"
 end StringTests
 ```
 
+In practice, you'd often put each suite in its own file—`Tests/ArithmeticTests.lean` and `Tests/StringTests.lean`—and import both in your test runner. The pattern stays the same: each file is a self-contained suite with its own namespace, `testSuite` declaration, tests, and `#generate_tests` call.
+
 ## Testing with IO
 
-Tests run in `IO`, so you can test effectful code:
+Because tests run in the `IO` monad, you can test code that reads files, makes network requests, accesses databases, or performs any other side effect. This makes Crucible suitable for integration testing, not just unit testing.
 
 ```lean
 test "file operations" := do
@@ -114,9 +122,11 @@ test "file operations" := do
   content.length > 0 |> ensure "file should not be empty"
 ```
 
+When testing effectful code, keep in mind that tests run sequentially within a suite and each test starts with a fresh state. If you need shared setup—like creating a test file before running tests that read it—use fixtures, which are covered in a later guide.
+
 ## Using Assertions
 
-Crucible provides several assertion styles:
+Crucible provides several assertion styles, each suited to different situations:
 
 ```lean
 -- Equality (recommended)

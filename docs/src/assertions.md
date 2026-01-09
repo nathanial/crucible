@@ -1,12 +1,16 @@
 # Assertions
 
-Crucible provides a comprehensive set of assertions for testing your code.
+Assertions are the core of testing—they express what you expect to be true and fail loudly when reality disagrees. Crucible provides over 30 built-in assertions covering equality, options, collections, strings, exceptions, and more.
+
+Each assertion follows the same pattern: check a condition, and if it fails, throw an error with a descriptive message. This means tests stop at the first failure by default, which helps you focus on one problem at a time. For cases where you want to check multiple conditions and see all failures, see [Soft Assertions](./soft-assertions.md).
 
 ## Equality Assertions
 
+Most tests ultimately check that two values are equal. Crucible's equality assertions are the workhorses you'll use constantly—they compare values, show the difference when they don't match, and work with any type that has a `BEq` instance.
+
 ### The `≡` Operator
 
-The primary assertion operator. Type `\equiv` or copy the Unicode character.
+The primary assertion operator. Type `\equiv` in your editor or copy the Unicode character directly. This is the assertion you'll reach for most often.
 
 ```lean
 test "equality" := do
@@ -27,9 +31,11 @@ test "shouldBe" := do
 
 ## Option Assertions
 
+Working with `Option` values is common in Lean, and unwrapping them manually in every test adds noise. Option assertions handle the unwrapping for you: they check that the option is `some` and that the contained value matches your expectation, or they verify that an option is `none`.
+
 ### The `≡?` Operator
 
-Unwraps an `Option` and checks equality. Type `\equiv?`.
+Unwraps an `Option` and checks equality in one step. Type `\equiv?` in your editor. If the option is `none`, the assertion fails with a clear message about expecting `some`.
 
 ```lean
 test "option equality" := do
@@ -59,9 +65,11 @@ test "shouldBeNone" := do
 
 ## Boolean Assertions
 
+Sometimes you need to check a condition that doesn't fit neatly into equality. Is this number positive? Is this list non-empty? Does this string match a pattern? Boolean assertions let you express arbitrary conditions and provide custom messages when they fail.
+
 ### `ensure`
 
-Assert a condition with a message:
+The most direct boolean assertion. Give it a condition and a message describing what should be true:
 
 ```lean
 test "ensure" := do
@@ -90,9 +98,11 @@ test "shouldMatch" := do
 
 ## Numeric Assertions
 
+Floating-point arithmetic is notoriously imprecise—`0.1 + 0.2` doesn't exactly equal `0.3`. Numeric assertions handle this by comparing within a tolerance, so you can test floating-point code without fighting rounding errors.
+
 ### `shouldBeNear`
 
-Assert floats are approximately equal:
+Assert that two floats are approximately equal, within an epsilon tolerance. The default epsilon is 0.0001, but you can specify a custom value for tighter or looser comparisons:
 
 ```lean
 test "floating point" := do
@@ -121,9 +131,11 @@ test "range" := do
 
 ## Collection Assertions
 
+Tests often work with lists and arrays, and you frequently need to verify their contents. Rather than converting to specific values and comparing, collection assertions let you express what you care about directly: length, membership, containment.
+
 ### `shouldHaveLength`
 
-Assert list length:
+Assert that a list has a specific length. This is often the first check you make when testing functions that produce collections:
 
 ```lean
 test "length" := do
@@ -173,9 +185,11 @@ test "notEmpty" := do
 
 ## String Assertions
 
+Strings have their own patterns: checking prefixes for URLs or file paths, checking suffixes for extensions, searching for substrings in output or logs. String assertions handle these common cases with readable syntax.
+
 ### `shouldStartWith`
 
-Assert string prefix:
+Assert that a string begins with a specific prefix. Useful for URLs, paths, or any string with a predictable start:
 
 ```lean
 test "startsWith" := do
@@ -205,9 +219,11 @@ test "containsSubstr" := do
 
 ## Exception Assertions
 
+Good code throws exceptions for invalid inputs, failed operations, and error conditions. Testing this behavior requires assertions that expect failures—ones that pass when an exception occurs and fail when the code completes normally.
+
 ### `shouldThrow`
 
-Assert that an action throws:
+Assert that an action throws any exception. The test passes if an exception is raised, regardless of the exception message:
 
 ```lean
 test "throws" := do
@@ -245,9 +261,11 @@ test "noThrow" := do
 
 ## Except Assertions
 
+The `Except` type represents computations that might fail, returning either `ok value` or `error e`. These assertions check which case you got and let you work with the value or error.
+
 ### `shouldBeOk`
 
-Assert `Except` is `Ok` and return the value:
+Assert that an `Except` is `ok` and extract the value for further testing. This is useful when you want to verify both that the operation succeeded and that the result has the right properties:
 
 ```lean
 test "ok" := do
@@ -266,9 +284,11 @@ test "error" := do
 
 ## Context and Messages
 
+When a test fails, the assertion message shows what was expected versus what was received. But sometimes you need more context: which iteration of a loop failed? Which field of a structure was wrong? Context and message helpers let you annotate assertions with additional information.
+
 ### `withContext`
 
-Add context to assertion failures:
+Add explanatory context that appears when an assertion fails. The context is appended to the failure message, helping you understand which part of a complex test failed:
 
 ```lean
 test "with context" := do

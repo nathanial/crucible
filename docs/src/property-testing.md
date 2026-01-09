@@ -1,16 +1,20 @@
 # Property Testing
 
-QuickCheck-style property-based testing with automatic shrinking.
+Traditional example-based tests verify that specific inputs produce expected outputs: given input X, expect output Y. This works well when you can enumerate the interesting cases, but some behaviors apply across entire domains. Addition is commutative for all integers, not just the ones you happened to test. List reversal is self-inverse for lists of any length. When a property should hold universally, testing a handful of examples provides weak evidence at best.
+
+Property testing takes a different approach. Instead of specifying individual test cases, you describe properties that should always be true, and the framework generates hundreds of random inputs to verify them. If any input violates the property, the test fails and shows you the counterexample—often a small, simple case that makes the bug obvious.
 
 ## Overview
 
-Property testing generates random inputs and verifies that properties hold for all of them. When a test fails, Crucible automatically shrinks the input to find a minimal counterexample.
+Crucible's property testing follows the QuickCheck tradition. You write a property as a function from random inputs to a boolean, and Crucible generates inputs, checks the property, and when a failure occurs, shrinks the input to find the simplest counterexample.
 
 ```lean
 proptest "addition is commutative" :=
   forAll' fun (a, b) : (Int × Int) =>
     a + b == b + a
 ```
+
+This property says that for any pair of integers, swapping the order of addition doesn't change the result. Crucible will generate 100 random pairs, check each one, and report any that fail. Since addition really is commutative, this test passes—but if it didn't, you'd see exactly which pair violated the property.
 
 ## Basic Usage
 
@@ -109,9 +113,15 @@ proptest "point origin distance" :=
 
 ## Shrinking
 
-When a test fails, Crucible tries to find a simpler counterexample.
+When property testing finds a failing input, that input is often large and complicated—a list with 47 elements, an integer like 8294716. The actual bug might only require 2 elements or the number -1. Finding the minimal failing case by hand is tedious; shrinking automates it.
+
+Shrinking works by repeatedly trying smaller versions of the failing input. If a smaller version still fails the property, it becomes the new candidate, and shrinking continues from there. Eventually, no smaller failing input can be found, and that's your counterexample.
+
+The result is often revelatory. Instead of staring at a 47-element list wondering what went wrong, you see a 2-element list that makes the bug obvious.
 
 ### Built-in Shrinking
+
+Each type shrinks toward a "zero" value:
 
 - `Nat` shrinks toward 0
 - `Int` shrinks toward 0
@@ -173,12 +183,17 @@ structure PropConfig where
 
 ## Writing Properties
 
+The hardest part of property testing is figuring out what properties to test. Unlike example-based tests where you pick inputs and outputs, property tests require thinking about the general behavior of your code—what's true for all valid inputs?
+
 ### Good Properties
 
-1. **Mathematical laws**: commutativity, associativity, identity
-2. **Invariants**: properties that should always hold
-3. **Round-trip**: `f (g x) == x`
-4. **Reference implementation**: compare to known-correct code
+Some property patterns appear across many domains. Mathematical laws like commutativity (`a + b == b + a`) and associativity (`(a + b) + c == a + (b + c)`) directly translate to tests. If your function is supposed to be idempotent, test that applying it twice gives the same result as applying it once.
+
+Invariants are properties that should always hold regardless of what you do. A sorted list should stay sorted after inserting an element. A balanced tree should stay balanced after any operation. These make excellent properties because they capture essential correctness conditions.
+
+Round-trip properties test that encoding and decoding are inverses: `decode (encode x) == x`. This pattern works for serializers, parsers, compressors, and anything that transforms data reversibly.
+
+Finally, if you have a slow-but-obviously-correct reference implementation and a fast-but-complex optimized version, test that they agree on all inputs. This oracle testing catches bugs in the optimized code while relying on the reference for correctness.
 
 ### Examples
 
@@ -272,9 +287,14 @@ end MathTests
 
 ## Best Practices
 
-1. **Start with simple properties**: Build complexity gradually
-2. **Use descriptive names**: Property names should explain what's being tested
-3. **Test edge cases**: Ensure generators can produce edge values
-4. **Keep properties pure**: Avoid side effects in property predicates
-5. **Run enough tests**: Increase test count for critical properties
-6. **Save failing seeds**: Use fixed seeds to reproduce failures
+Property testing rewards a gradual approach. Start with the simplest property you can think of—something you're confident should pass. This validates that your generators work and your property syntax is correct. Then build toward more interesting properties, adding complexity only when the simpler ones pass.
+
+Naming matters more in property tests than in example tests. A test named "test_1" tells you nothing when it fails; a test named "sorting preserves length" tells you exactly what invariant was violated. Since you'll be reading failure output to understand counterexamples, invest in names that explain what should have been true.
+
+Generators need to cover edge cases. If your list generator never produces empty lists, you might miss bugs that only manifest on empty input. Check that your generators can produce the smallest values (0, empty list, empty string) as well as larger ones. Most built-in generators already do this, but custom generators need explicit thought.
+
+Properties should be pure functions—no side effects, no printing, no IO beyond what's needed to compute the result. Side effects make shrinking unreliable because the same input might behave differently on different runs. If you need to test effectful code, wrap it so the property can compare results purely.
+
+The default 100 tests catches most bugs, but critical code deserves more. Bump the count for properties that are central to correctness, especially ones with large input spaces. A property over pairs of 64-bit integers has more possible inputs than you can exhaustively test, so more random samples provide more confidence.
+
+When a test fails, save the seed. Including `(seed := 12345)` in your property makes the failure reproducible, which is essential for debugging. Once you fix the bug, you can either keep the seed (as a regression test) or remove it (to resume random testing).

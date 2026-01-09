@@ -94,13 +94,15 @@ end MyTests
 
 ## Why Crucible?
 
-Crucible was designed with a few key principles:
+Testing should be easy enough that you actually do it. Many testing frameworks impose ceremony—configuration files, special annotations, complex setup rituals—that creates friction between having an idea and verifying it works. Crucible takes the opposite approach: if you can write a `do` block, you can write a test.
 
-1. **Minimal boilerplate**: Define tests with just a name and a do block
-2. **Discoverable**: Tests are automatically collected and run
-3. **Readable output**: Clear pass/fail reporting with timing information
-4. **Flexible**: Support for fixtures, retries, timeouts, and property testing
-5. **Zero dependencies**: Uses only Lean's standard library
+The design centers on removing barriers. You don't register tests manually or maintain lists of test functions. Instead, you write tests where they make sense, and Crucible finds them automatically. The `#generate_tests` command scans the current namespace and collects everything marked with `test`, so adding a new test is just writing it—nothing else to update, no boilerplate to maintain.
+
+Output matters too. When tests fail, you need to understand why quickly. Crucible shows exactly what was expected versus what was received, with timing information so you can spot slow tests at a glance. When everything passes, the output stays clean and informative without drowning you in noise.
+
+Crucible deliberately avoids external dependencies. It uses only Lean's standard library, which means no version conflicts, no transitive dependency headaches, and one less thing to worry about when upgrading your toolchain. This constraint also keeps the library focused—rather than pulling in half the ecosystem, Crucible does one thing well.
+
+The feature set grew from real testing needs: fixtures for setup and teardown, timeouts for tests that might hang, retries for flaky network calls, skip and expected-failure markers for work in progress, and property-based testing for when examples aren't enough. Each feature exists because the alternative—working around its absence—was worse than adding it.
 
 ## Getting Started
 
