@@ -701,16 +701,12 @@ def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
     (defaultRetryCount : Option Nat := none)
     (beforeEach : Option (IO Unit) := none)
     (afterEach : Option (IO Unit) := none)
-    (progressPrefix : String := "") : IO TestOutcome := do
+    (suiteName : String := "") : IO TestOutcome := do
   let startTime ← IO.monoMsNow
-  IO.print s!"{progressPrefix}  {tc.name}... "
+  let fullName := if suiteName.isEmpty then tc.name else s!"{suiteName} > {tc.name}"
 
-  -- Handle skipped tests first
-  if let some skipReason := tc.skip then
-    let reasonStr := match skipReason with
-      | .unconditional r => r
-      | .conditional r => r
-    IO.println s!"{Output.skipSymbol} (skipped: {reasonStr})"
+  -- Handle skipped tests first (silent - no output)
+  if let some _ := tc.skip then
     return .skipped
 
   try
@@ -738,12 +734,10 @@ def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
       if let some hook := afterEach then
         try hook catch _ => pure ()
       let elapsed := (← IO.monoMsNow) - startTime
-      -- For xfail tests, catching an exception is expected
+      -- For xfail tests, catching an exception is expected (silent)
       if tc.xfail then
-        let reason := tc.xfailReason.getD "expected failure"
-        IO.println s!"{Output.xfailSymbol} (xfail: {reason}) {Output.timing elapsed}"
         return .xfailed
-      IO.println s!"{Output.failSymbol} {Output.timing elapsed}\n    {e}"
+      IO.println s!"{Output.failSymbol} {fullName} {Output.timing elapsed}\n  {e}"
       return .failed
 
     -- Run afterEach hook if present (on success)
@@ -752,22 +746,20 @@ def runTest (tc : TestCase) (defaultTimeoutMs : Option Nat := none)
 
     let elapsed := (← IO.monoMsNow) - startTime
 
-    -- Handle xfail tests that unexpectedly passed
+    -- Handle xfail tests that unexpectedly passed (this is a problem, so output it)
     if tc.xfail then
       let reason := tc.xfailReason.getD "expected failure"
-      IO.println s!"{Output.xpassSymbol} (XPASS - expected to fail: {reason}) {Output.timing elapsed}"
+      IO.println s!"{Output.xpassSymbol} {fullName} (XPASS - expected to fail: {reason}) {Output.timing elapsed}"
       return .xpassed
 
-    IO.println s!"{Output.passSymbol} {Output.timing elapsed}"
+    -- Passed tests are silent
     return .passed
   catch e =>
     let elapsed := (← IO.monoMsNow) - startTime
-    -- For xfail tests, any exception means expected failure
+    -- For xfail tests, any exception means expected failure (silent)
     if tc.xfail then
-      let reason := tc.xfailReason.getD "expected failure"
-      IO.println s!"{Output.xfailSymbol} (xfail: {reason}) {Output.timing elapsed}"
       return .xfailed
-    IO.println s!"{Output.failSymbol} {Output.timing elapsed}\n    {e}"
+    IO.println s!"{Output.failSymbol} {fullName} {Output.timing elapsed}\n  {e}"
     return .failed
 
 /-- Run a list of test cases and report results for a single suite. -/
@@ -776,8 +768,6 @@ def runTests (name : String) (cases : List TestCase)
     (defaultRetryCount : Option Nat := none)
     (fixture : Fixture := {}) : IO SuiteResult := do
   let suiteStartTime ← IO.monoMsNow
-  IO.println s!"\n{Output.bold name}"
-  IO.println ("─".intercalate (List.replicate name.length ""))
 
   -- Run beforeAll hook if present
   if let some hook := fixture.beforeAll then
@@ -789,18 +779,14 @@ def runTests (name : String) (cases : List TestCase)
       let elapsed := (← IO.monoMsNow) - suiteStartTime
       return { name, passed := 0, failed := cases.length, elapsedMs := elapsed }
 
-  let totalTests := cases.length
   let mut passed := 0
   let mut failed := 0
   let mut skipped := 0
   let mut xfailed := 0
   let mut xpassed := 0
-  let mut current := 0
 
   for tc in cases do
-    current := current + 1
-    let progressPrefix := Output.progress current totalTests
-    let outcome ← runTest tc defaultTimeoutMs defaultRetryCount fixture.beforeEach fixture.afterEach progressPrefix
+    let outcome ← runTest tc defaultTimeoutMs defaultRetryCount fixture.beforeEach fixture.afterEach name
     match outcome with
     | .passed => passed := passed + 1
     | .failed => failed := failed + 1
@@ -814,16 +800,6 @@ def runTests (name : String) (cases : List TestCase)
       hook
     catch e =>
       IO.println s!"  {Output.failSymbol} [afterAll failed: {e}]"
-
-  -- Build result string with all non-zero counts (colored)
-  let mut parts : List String := []
-  if passed > 0 then parts := parts ++ [Output.green s!"{passed} passed"]
-  if failed > 0 then parts := parts ++ [Output.red s!"{failed} failed"]
-  if skipped > 0 then parts := parts ++ [Output.yellow s!"{skipped} skipped"]
-  if xfailed > 0 then parts := parts ++ [Output.yellow s!"{xfailed} xfailed"]
-  if xpassed > 0 then parts := parts ++ [Output.red s!"{xpassed} xpassed"]
-  if parts.isEmpty then parts := [Output.dim "0 tests"]
-  IO.println s!"\nResults: {", ".intercalate parts}"
 
   let elapsed := (← IO.monoMsNow) - suiteStartTime
   return { name, passed, failed, skipped, xfailed, xpassed, elapsedMs := elapsed }
