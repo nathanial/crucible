@@ -16,8 +16,8 @@ A lightweight test framework for Lean 4 with automatic test discovery.
 ```
 Crucible.lean        -- This file: main entry point, re-exports all modules
 ├── Core.lean        -- TestCase, assertions (≡, shouldBe, etc.), test runners
-├── Macros.lean      -- `test` and `#generate_tests` syntax
-├── SuiteRegistry    -- `testSuite` command for auto-discovery
+├── Macros.lean      -- `test` syntax for defining tests
+├── SuiteRegistry    -- `testSuite` command and test case extension for auto-discovery
 ├── Filter.lean      -- TestFilter type for selective test runs
 ├── CLI.lean         -- Command-line argument parsing
 ├── Output.lean      -- ANSI colors and formatting
@@ -51,8 +51,6 @@ test "option unwrapping" := do
 test "string operations" := do
   "hello".length ≡ 5
   shouldContainSubstr "hello world" "world"
-
-#generate_tests
 
 end MyProject.Tests
 ```
@@ -190,8 +188,6 @@ afterEach := do
 
 test "insert record" := do
   ...
-
-#generate_tests
 
 end MyTests
 ```

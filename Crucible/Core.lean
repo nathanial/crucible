@@ -925,14 +925,15 @@ private def elabRunAllSuitesCore (timeoutOpt : Option (TSyntax `term))
 
   for suite in SuiteRegistry.getAllSuites env do
     let suiteNameLit : TSyntax `term := ⟨Syntax.mkStrLit suite.suiteName⟩
-    let casesName := SuiteRegistry.suiteCasesName suite
-    let casesIdent := mkIdentFrom ref casesName (canonical := true)
+    -- Query the test case extension directly for automatic discovery
+    let suiteTests := SuiteRegistry.getTestsForSuite env suite.ns
     let casesTerm : TSyntax `term ←
-      if env.contains casesName then
-        `(term| $casesIdent)
-      else
-        logWarning s!"No `cases` definition found for suite {suite.suiteName} ({suite.ns}). Did you forget #generate_tests?"
+      if suiteTests.isEmpty then
         `(term| ([] : List _root_.Crucible.TestCase))
+      else
+        let testIdents : Array (TSyntax `term) := suiteTests.map fun testName =>
+          mkIdentFrom ref testName (canonical := true)
+        `(term| [$[$testIdents],*])
 
     -- Check for fixture hooks
     let beforeAllName := suite.ns ++ `beforeAll
@@ -1187,14 +1188,15 @@ private def elabRunAllSuitesFilteredCore (argsStx : TSyntax `term)
 
   for suite in SuiteRegistry.getAllSuites env do
     let suiteNameLit : TSyntax `term := ⟨Syntax.mkStrLit suite.suiteName⟩
-    let casesName := SuiteRegistry.suiteCasesName suite
-    let casesIdent := mkIdentFrom ref casesName (canonical := true)
+    -- Query the test case extension directly for automatic discovery
+    let suiteTests := SuiteRegistry.getTestsForSuite env suite.ns
     let casesTerm : TSyntax `term ←
-      if env.contains casesName then
-        `(term| $casesIdent)
-      else
-        logWarning s!"No `cases` definition found for suite {suite.suiteName} ({suite.ns}). Did you forget #generate_tests?"
+      if suiteTests.isEmpty then
         `(term| ([] : List _root_.Crucible.TestCase))
+      else
+        let testIdents : Array (TSyntax `term) := suiteTests.map fun testName =>
+          mkIdentFrom ref testName (canonical := true)
+        `(term| [$[$testIdents],*])
 
     -- Check for fixture hooks
     let beforeAllName := suite.ns ++ `beforeAll

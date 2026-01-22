@@ -48,8 +48,6 @@ test "addition works" := do
 test "multiplication works" := do
   (3 * 4) ≡ 12
 
-#generate_tests
-
 end MyTests
 ```
 
@@ -85,7 +83,7 @@ def main : IO UInt32 := do
 
 - **Declarative syntax**: Use `test "name" := do` to define tests
 - **Test suites**: Group tests with `testSuite "name"`
-- **Automatic collection**: `#generate_tests` collects all tests in the namespace
+- **Automatic discovery**: Tests are discovered automatically—no registration needed
 - **Automatic suite runner**: `runAllSuites` runs every registered suite
 - **Test timeouts**: Configure per-test or suite-wide timeouts
 - **Test retries**: Configure automatic retry count for flaky tests

@@ -39,8 +39,6 @@ test "second test" := do
   log.modify (· ++ ["test2"])
   ensure true "second test runs"
 
-#generate_tests
-
 end Tests.Fixtures
 
 namespace Tests.NoFixtures
@@ -54,8 +52,6 @@ test "test without fixtures" := do
 
 test "another test without fixtures" := do
   "hello".length ≡ 5
-
-#generate_tests
 
 end Tests.NoFixtures
 
@@ -83,8 +79,6 @@ test "expected failure that fails" (xfail := "known bug #123") := do
 test "expected failure simple" (xfail) := do
   -- This test is expected to fail
   ensure false "This is expected to fail"
-
-#generate_tests
 
 end Tests.SkipXfail
 
@@ -148,7 +142,5 @@ test "failure count tracking" := do
   count2 ≡ 2
   let hasFailures ← ctx.hasFailures
   ensure hasFailures "should have failures"
-
-#generate_tests
 
 end Tests.SoftAsserts

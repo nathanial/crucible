@@ -132,6 +132,4 @@ test "failure property fails" := do
   let result ← (Property.failure "expected").run
   ensure (!result.isSuccess) "Failure property should fail"
 
-#generate_tests
-
 end Crucible.Tests.Property

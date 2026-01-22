@@ -9,8 +9,9 @@ Enables automatic discovery of test suites across modules.
 
 1. Each test file calls `testSuite "Suite Name"` to register itself
 2. The suite info (name + namespace) is stored in an environment extension
-3. At runtime, `runAllSuites` iterates over all registered suites
-4. For each suite, it looks up `<namespace>.cases` to get the test list
+3. Each `test` macro registers the test case name in `testCaseExtension`
+4. At runtime, `runAllSuites` iterates over all registered suites
+5. For each suite, it queries `testCaseExtension` for tests in that namespace
 
 ## Required Structure
 
@@ -31,8 +32,6 @@ test "test 1" := do
 test "test 2" := do
   "hello".length ≡ 5
 
-#generate_tests  -- Creates `cases` definition
-
 end MyProject.FeatureTests
 ```
 
@@ -44,20 +43,19 @@ You can define multiple suites in one file using separate namespaces:
 namespace Tests.Unit
 testSuite "Unit Tests"
 test "..." := do ...
-#generate_tests
 end Tests.Unit
 
 namespace Tests.Integration
 testSuite "Integration Tests"
 test "..." := do ...
-#generate_tests
 end Tests.Integration
 ```
 
 ## Key Functions
 
 - `getAllSuites env` - Get all registered `SuiteInfo` from environment
-- `suiteCasesName suite` - Get the `cases` definition name for a suite
+- `getTestsForSuite env suiteNs` - Get test case names for a specific suite
+- `getRegisteredTests env` - Get all registered test case names
 -/
 
 namespace Crucible.SuiteRegistry
@@ -91,9 +89,32 @@ initialize suiteExtension : SimplePersistentEnvExtension SuiteInfo (Array SuiteI
 def getAllSuites (env : Environment) : Array SuiteInfo :=
   suiteExtension.getState env
 
-/-- The name of the `cases` definition associated with a suite's namespace. -/
+/-- The name of the `cases` definition associated with a suite's namespace.
+    **Deprecated**: Test discovery is now automatic via `testCaseExtension`. -/
 def suiteCasesName (suite : SuiteInfo) : Name :=
   suite.ns ++ `cases
+
+/-! ## Environment Extension for Test Case Collection -/
+
+/-- Environment extension that collects test case definition names within a module.
+    This enables automatic test discovery without needing `#generate_tests`. -/
+initialize testCaseExtension : SimplePersistentEnvExtension Name (Array Name) ←
+  registerSimplePersistentEnvExtension {
+    name := `crucibleTestCaseRegistry
+    addImportedFn := fun arrays => arrays.foldl Array.append #[]
+    addEntryFn := Array.push
+  }
+
+/-- Get all registered test case names from the environment. -/
+def getRegisteredTests (env : Environment) : Array Name :=
+  testCaseExtension.getState env
+
+/-- Get test cases for a specific suite namespace.
+    Returns all test names where the test is defined directly in the namespace
+    or in a sub-namespace of the suite. -/
+def getTestsForSuite (env : Environment) (suiteNs : Name) : Array Name :=
+  (getRegisteredTests env).filter fun name =>
+    name.getPrefix == suiteNs || suiteNs.isPrefixOf name
 
 /-- Iterate over all registered suites in the environment. -/
 def forAllSuites [Monad m] (env : Environment) (f : SuiteInfo → m Unit) : m Unit := do

@@ -39,8 +39,6 @@ proptest "fixed seed test" (seed := 42) :=
 -- With custom test count
 proptest "thorough test" (tests := 1000) :=
   forAll' fun (x : Int) => x * 1 == x
-
-#generate_tests
 ```
 
 ## Custom Types

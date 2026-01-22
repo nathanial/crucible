@@ -14,7 +14,7 @@ namespace Crucible.Property
 
 open Lean Elab Command Meta
 open Crucible
-open Crucible.Macros
+open Crucible.SuiteRegistry (testCaseExtension)
 
 /-! ## Proptest Syntax -/
 
@@ -80,7 +80,7 @@ private def elabProptestCore (desc : TSyntax `str) (propTerm : TSyntax `term)
 
   -- Generate TestCase definition
   let cmd ← `(command|
-    private def $defId : TestCase := {
+    def $defId : TestCase := {
       name := $desc
       run := Property.runOrFail $propTerm $configExpr
     }
