@@ -676,19 +676,33 @@ inductive TestOutcome where
 /-- Run a single test case. Uses dedicated threads to avoid thread pool exhaustion
     when tests contain blocking FFI calls or for-loops with I/O operations. -/
 private def runWithTimeout (timeoutMs : Nat) (action : IO Unit) : IO Unit := do
+  let doneRef ← IO.mkRef false
   let testTask ← IO.asTask (prio := .dedicated) (do
-    action
-    return Sum.inl ()
+    try
+      action
+      return Sum.inl ()
+    finally
+      doneRef.set true
   )
   let timeoutTask ← IO.asTask (prio := .dedicated) (do
-    IO.sleep (UInt32.ofNat timeoutMs)
+    let stepMs := 50
+    let steps := (timeoutMs + stepMs - 1) / stepMs
+    let mut remaining := timeoutMs
+    for _ in [:steps] do
+      if (← doneRef.get) then
+        return Sum.inl ()
+      let step := Nat.min stepMs remaining
+      IO.sleep step.toUInt32
+      remaining := remaining - step
     return Sum.inr ()
   )
   let result ← IO.waitAny [testTask, timeoutTask]
   match result with
   | .ok (.inl ()) =>
     IO.cancel timeoutTask
-    pure ()
+    match testTask.get with
+    | .ok _ => pure ()
+    | .error err => throw err
   | .ok (.inr ()) =>
     IO.cancel testTask
     throw <| IO.userError s!"Test timed out after {timeoutMs}ms"
