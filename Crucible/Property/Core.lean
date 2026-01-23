@@ -98,6 +98,27 @@ private def shrinkLoop [Shrinkable α] [Repr α]
       | some smaller => loop smaller fuel' (shrinks + 1)
   loop x maxShrinks 0
 
+/-- Shrink a failing value using an IO-based predicate.
+    Tries each shrink candidate sequentially. -/
+private def shrinkLoopIO [Shrinkable α] [Repr α]
+    (prop : α → IO Bool) (x : α) (maxShrinks : Nat) : IO (α × Nat) := do
+  let rec loop (current : α) (fuel : Nat) (shrinks : Nat) : IO (α × Nat) := do
+    match fuel with
+    | 0 => pure (current, shrinks)
+    | fuel' + 1 =>
+      let candidates := Shrinkable.shrink current
+      -- Find first failing candidate
+      let mut found : Option α := none
+      for c in candidates do
+        if found.isNone then
+          let passed ← prop c
+          if !passed then
+            found := some c
+      match found with
+      | none => pure (current, shrinks)
+      | some smaller => loop smaller fuel' (shrinks + 1)
+  loop x maxShrinks 0
+
 
 /-! ## forAll Combinator -/
 
@@ -151,6 +172,60 @@ def forAll [Shrinkable α] [Repr α]
 def forAll' [Arbitrary α] [Shrinkable α] [Repr α]
     (prop : α → Bool) : Property :=
   forAll arbitrary prop
+
+/-- Property combinator for IO-based predicates.
+    Use this when your property needs to run IO actions (e.g., FRP tests).
+
+Example:
+```lean
+forAllIO (Gen.choose 0 100) fun n => do
+  let result ← someIOAction n
+  pure (result == expected)
+```
+-/
+def forAllIO [Shrinkable α] [Repr α]
+    (gen : Gen α) (prop : α → IO Bool) : Property := {
+  check := fun cfg => do
+    -- Get seed
+    let seed ← match cfg.seed with
+      | some s => pure s
+      | none => do
+        let r ← RandState.fromTime
+        pure r.seed.toNat
+
+    let mut rand := RandState.fromNat seed
+    let mut testNum := 0
+
+    while testNum < cfg.numTests do
+      -- Compute size for this test (grows from 0 to maxSize)
+      let size := if cfg.numTests <= 1 then cfg.maxSize
+                  else testNum * cfg.maxSize / (cfg.numTests - 1)
+
+      -- Generate value
+      let (value, rand') := gen.run rand size
+      rand := rand'
+
+      -- Test property
+      if cfg.verbose then
+        IO.println s!"Test {testNum + 1}: {repr value}"
+
+      let passed ← prop value
+      if !passed then
+        -- Found a failure - try to shrink
+        let originalRepr := reprStr value
+        let (shrunk, shrinks) ← shrinkLoopIO prop value cfg.maxShrinks
+        let shrunkRepr := reprStr shrunk
+        return .failure originalRepr shrunkRepr shrinks seed (testNum + 1)
+
+      testNum := testNum + 1
+
+    return .success cfg.numTests
+}
+
+/-- Simpler forAllIO using Arbitrary instance. -/
+def forAllIO' [Arbitrary α] [Shrinkable α] [Repr α]
+    (prop : α → IO Bool) : Property :=
+  forAllIO arbitrary prop
 
 /-- Property that always succeeds. -/
 def success : Property := {
